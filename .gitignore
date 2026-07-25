@@ -1,0 +1,29 @@
+# MATLAB editor backup/autosave files
+*.asv
+*.m~
+
+# Compiled MEX files
+*.mex*
+*.mexa64
+*.mexw64
+
+# MATLAB packaged application/toolbox files
+*.mlappinstall
+*.mltbx
+
+# Simulink generated files and folders
+*.slxc
+*.autosave
+slprj/
+sccprj/
+codegen/
+
+# MATLAB temporary files
+*.tmp
+*.bak
+*.log
+
+# Operating-system files
+.DS_Store
+Thumbs.db
+desktop.ini
