@@ -51,5 +51,5 @@ the intended license before publishing.)*
 
 ## Contact
 
-George (Goga) Lanchava — issues and questions via this repository's issue
+Goga Lanchava — issues and questions via this repository's issue
 tracker.
