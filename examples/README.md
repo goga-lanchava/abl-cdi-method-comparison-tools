@@ -4,6 +4,15 @@ Real device exports from anesthetized porcine experiments, used for
 validation in the accompanying thesis and SoftwareX article. These are
 animal experimental data (not human patient data).
 
+**De-identification:** the ABL Flex 800 export's name/birthdate/note
+fields are blank in the original device output for these recordings — no
+personal or institutional identifiers were present to remove. Patient
+identity is limited to the device-assigned numeric Patient ID.
+
+See [`../WALKTHROUGH.md`](../WALKTHROUGH.md) for step-by-step instructions
+that reproduce the article's representative figures and reported statistics
+using this data.
+
 | File | Source device | Use |
 |---|---|---|
 | `PatLog_export.csv` | ABL Flex 800 | Load into **PatLogGUI** directly. Also the ABL-side input for **ABG Analyzer Enhanced** (contains multiple patients, including 2026007 and 2026027 below). |

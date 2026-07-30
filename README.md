@@ -18,9 +18,15 @@ See each tool's own README for details, requirements, and usage instructions.
   of the source — please confirm in a clean MATLAB install before relying on
   this for your own environment.
 
-Both tools are also distributed as standalone Windows executables (see
-[Releases](../../releases)) that bundle the MATLAB Runtime, so they can be
-run without a MATLAB license.
+Compiled standalone Windows executables (bundling the MATLAB Runtime, so no
+MATLAB license is needed to run them) are published under the
+[Executables release](../../releases/tag/Executables).
+
+## Reproducing the article's results
+
+See [WALKTHROUGH.md](WALKTHROUGH.md) for step-by-step instructions that use
+the data in `examples/` to reproduce the representative figures and
+statistics reported in the accompanying SoftwareX article.
 
 ## Repository structure
 
@@ -33,6 +39,7 @@ run without a MATLAB license.
 │   ├── src/ABG_Analyzer_Enhanced.m
 │   └── docs/DATA_FORMATS.md
 ├── examples/            # sample/illustrative ABL + CDI data
+├── WALKTHROUGH.md       # reproduces the article's reported figures/statistics
 ├── CHANGELOG.md
 ├── CODE_METADATA.md     # SoftwareX submission metadata table (both tools)
 ├── LICENSE
