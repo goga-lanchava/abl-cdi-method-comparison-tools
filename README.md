@@ -53,5 +53,4 @@ SoftwareX article (citation details to be added upon publication).
 
 ## License
 
-See [LICENSE](LICENSE). *(Currently set to MIT as a placeholder — confirm
-the intended license before publishing.)*
+See [LICENSE](LICENSE). 
