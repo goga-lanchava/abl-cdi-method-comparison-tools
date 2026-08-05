@@ -39,6 +39,3 @@ many were removed.
 - Delimiter/decimal-notation handling is performed by MATLAB's import
   functions when reading the CSV/Excel file; no manual configuration is
   required by the user.
-- For the SoftwareX illustrative example, a small, de-identified or
-  synthetic PatLog export (a handful of patients/timepoints) is sufficient
-  — see `../examples/`.
