@@ -1,6 +1,14 @@
 # Changelog
 
-## ABL-CDI Analyzer (renamed from ABG Analyzer Enhanced)
+## ABL-CDI Analyzer v1 (renamed from ABG Analyzer Enhanced)
+- Hybrid correction method: Time-Series + Deming with AutoTune grid search,
+  MAD-based outlier filtering, and 95th-percentile derivative cap
+- Auto (Leave-One-Out Cross-Validation) model selection across 6 candidate
+  correction methods
+- TimeShift / AutoShift for instrument clock offset alignment
+- CorrView / BAView toggles; 4-panel Before/After comparison popup
+- Pin correction; LaTeX export of the fitted correction formula
+- Small-N warning label; continuous CDI line plot
 - Renamed application/class from `ABG_Analyzer_Enhanced` to
   `ABL_CDI_Analyzer`; window title simplified to "ABL-CDI Analyzer"
 - LOO-CV model selection: eliminated a data-leakage issue for both the
@@ -22,22 +30,10 @@
 - Fixed a LaTeX export bug where the τ (tau) symbol in the Hybrid model
   formula used a literal Unicode character instead of the `\tau` command
 
-## ABG Analyzer Enhanced v9.1 (State-Locked)
-- Hybrid correction method: Time-Series + Deming with AutoTune grid search,
-  MAD-based outlier filtering, and 95th-percentile derivative cap
-- Auto (Leave-One-Out Cross-Validation) model selection across 6 candidate
-  correction methods
-- TimeShift / AutoShift for instrument clock offset alignment
-- CorrView / BAView toggles; 4-panel Before/After comparison popup
-- Pin correction; LaTeX export of the fitted correction formula
-- Small-N warning label; continuous CDI line plot
-
-## PatLogGUI v1.05
+## PatLogGUI v1
 - Automatic delimiter/decimal-notation detection for CSV/Excel imports
 - Two-stage cleaning (essential-column selection, patient-ID row validation)
 - Three-dimensional filtering (patient, catheter location, time point)
 - Trend Analysis, Multi-Parameter View, Location Comparison visualizations
 - Statistical Analysis module with descriptive statistics and boxplots
 - Cleaned/patient-filtered data export to Excel
-
-

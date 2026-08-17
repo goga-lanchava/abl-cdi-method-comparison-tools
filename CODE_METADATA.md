@@ -4,7 +4,7 @@ Fill in the bracketed fields before submission.
 
 | Nr. | Code metadata description | Metadata |
 |---|---|---|
-| C1 | Current code version | PatLogGUI v1.05; ABL-CDI Analyzer v9.1 |
+| C1 | Current code version | PatLogGUI v1; ABL-CDI Analyzer v1 |
 | C2 | Permanent link to code/repository used for this code version | `https://github.com/goga-lanchava/abl-cdi-method-comparison-tools/releases/tag/v1.0-manuscript` |
 | C3 | Legal code license | MIT |
 | C4 | Code versioning system used | git |
