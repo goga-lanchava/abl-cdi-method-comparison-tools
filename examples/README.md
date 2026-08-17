@@ -15,9 +15,9 @@ using this data.
 
 | File | Source device | Use |
 |---|---|---|
-| `PatLog_export.csv` | ABL Flex 800 | Load into **PatLogGUI** directly. Also the ABL-side input for **ABG Analyzer Enhanced** (contains multiple patients, including 2026007 and 2026027 below). |
-| `2026007_cdi.log` | Terumo CDI 500 | CDI-side input for **ABG Analyzer Enhanced**, pairs with patient **2026007** in `PatLog_export.csv`. Corresponds to "Dataset 2026007" in the article (small, unstable recording, N=10 paired measurements). |
-| `2026027_cdi.log` | Terumo CDI 500 | CDI-side input for **ABG Analyzer Enhanced**, pairs with patient **2026027** in `PatLog_export.csv`. Corresponds to "Dataset 2026027" in the article (larger, stable recording, N=67 paired measurements). |
+| `PatLog_export.csv` | ABL Flex 800 | Load into **PatLogGUI** directly. Also the ABL-side input for **ABL-CDI Analyzer** (contains multiple patients, including 2026007 and 2026027 below). |
+| `2026007_cdi.log` | Terumo CDI 500 | CDI-side input for **ABL-CDI Analyzer**, pairs with patient **2026007** in `PatLog_export.csv`. Corresponds to "Dataset 2026007" in the article (small, unstable recording, N=10 paired measurements). |
+| `2026027_cdi.log` | Terumo CDI 500 | CDI-side input for **ABL-CDI Analyzer**, pairs with patient **2026027** in `PatLog_export.csv`. Corresponds to "Dataset 2026027" in the article (larger, stable recording, N=67 paired measurements). |
 
 ## Reproducing the PatLogGUI example
 
@@ -28,9 +28,9 @@ using this data.
    then use **Trend Analysis**, **Multi-Parameter View**, or **Location
    Comparison**.
 
-## Reproducing the ABG Analyzer Enhanced example
+## Reproducing the ABL-CDI Analyzer example
 
-1. Launch `ABG_Analyzer_Enhanced`.
+1. Launch `ABL_CDI_Analyzer`.
 2. **Load ABL Data** → `PatLog_export.csv`.
 3. **Load CDI Data** → `2026027_cdi.log` (or `2026007_cdi.log`).
 4. Select **Patient ID** `2026027` (or `2026007`), a **Parameter** (e.g.
@@ -40,6 +40,6 @@ using this data.
    in the article (e.g. for Dataset 2026027, pH: Hybrid correction, bias
    reduced to ~0.000, SD reduced by ~56%).
 
-See `../ABG_Analyzer_Enhanced/docs/DATA_FORMATS.md` and
+See `../ABL_CDI_Analyzer/docs/DATA_FORMATS.md` and
 `../PatLogGUI/docs/DATA_FORMAT.md` for the exact file-format specifications
 these examples follow.

@@ -7,13 +7,14 @@ ABL Flex 800 (intermittent electrochemical analyzer) and the Terumo CDI 500
 | Tool | Purpose |
 |---|---|
 | [`PatLogGUI`](PatLogGUI/) | Import, clean, filter, visualize, and export ABL Flex 800 exports |
-| [`ABG_Analyzer_Enhanced`](ABG_Analyzer_Enhanced/) | Temporally align ABL and CDI data, compute Bland–Altman method-comparison statistics, and fit/select correction models |
+| [`ABL_CDI_Analyzer`](ABL_CDI_Analyzer/) | Temporally align ABL and CDI data, compute Bland–Altman method-comparison statistics, and fit/select correction models |
 
 See each tool's own README for details, requirements, and usage instructions.
 
 ## Requirements
 
-- MATLAB R2025b or later (App Designer)
+- MATLAB R2025b (developed and tested in this version; compatibility with
+  other MATLAB releases has not been verified)
 - No additional toolboxes required beyond core MATLAB, based on static review
   of the source — please confirm in a clean MATLAB install before relying on
   this for your own environment.
@@ -35,8 +36,8 @@ statistics reported in the accompanying SoftwareX article.
 ├── PatLogGUI/
 │   ├── src/PatLogGUI.m
 │   └── docs/
-├── ABG_Analyzer_Enhanced/
-│   ├── src/ABG_Analyzer_Enhanced.m
+├── ABL_CDI_Analyzer/
+│   ├── src/ABL_CDI_Analyzer.m
 │   └── docs/DATA_FORMATS.md
 ├── examples/            # sample/illustrative ABL + CDI data
 ├── WALKTHROUGH.md       # reproduces the article's reported figures/statistics

@@ -15,13 +15,20 @@ in the accompanying SoftwareX article, using the data in [`examples/`](examples/
    click **Trend Analysis**. This reproduces the cleaned-data view shown in
    the article's Fig. 3.
 
-## 2. ABG Analyzer Enhanced — method comparison (article Figs. 4–5)
+## 2. ABL-CDI Analyzer — method comparison (article Figs. 4–5)
 
 This reproduces the pH result for Dataset 2026027 reported in the article
 (uncorrected bias +0.047, SD 0.095; Hybrid-corrected bias 0.000, SD 0.042,
 a 56% SD reduction).
 
-1. Launch `ABG_Analyzer_Enhanced` (source or compiled executable).
+> **Note:** the current source includes a fix to the LOO-CV procedure
+> (removing a hyperparameter data-leakage issue for the Deming λ and Hybrid
+> Auto-Tune parameters) and a change to how outlier points are masked in the
+> exported corrected series (see CHANGELOG.md). Both can shift the exact
+> figures below by a small amount; re-verify against your build rather than
+> treating these as exact expected output.
+
+1. Launch `ABL_CDI_Analyzer` (source or compiled executable).
 2. **Load ABL Data** → `examples/PatLog_export.csv`.
 3. **Load CDI Data** → `examples/2026027_cdi.log`.
 4. Set **Patient ID** to `2026027`, **Select Parameter** to `pH`, **Time
@@ -49,6 +56,6 @@ several correction methods were within 1% LOO-CV RMSE of one another).
 - Exact statistics may vary by a small amount (last-digit rounding)
   depending on MATLAB version and floating-point behavior, but should
   match the values above to within normal numerical tolerance.
-- See [`ABG_Analyzer_Enhanced/docs/DATA_FORMATS.md`](ABG_Analyzer_Enhanced/docs/DATA_FORMATS.md)
+- See [`ABL_CDI_Analyzer/docs/DATA_FORMATS.md`](ABL_CDI_Analyzer/docs/DATA_FORMATS.md)
   and [`PatLogGUI/docs/DATA_FORMAT.md`](PatLogGUI/docs/DATA_FORMAT.md) for
   the exact input file format specifications.
