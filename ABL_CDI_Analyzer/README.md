@@ -18,14 +18,17 @@ the continuous signal tracks the reference measurements more closely.
 - ABL export CSV parser and CDI monitor log parser
 - Nearest-neighbour time alignment with MAD-based outlier filtering and
   optional auto time-shift detection for clock offset correction
-- Six correction methods (Bias, OLS, Proportional, Deming (error-variance
-  ratio λ, default λ=1, user-configurable), a simplified Passing–Bablok fit
-  (median pairwise-slope regression; does not include the confidence-interval
-  or linearity-test procedures of the full standard method), and a Hybrid
-  Time-Series+Deming method with Auto-Tune) plus Auto (nested Leave-One-Out
-  Cross-Validation) model selection, with the narrower Bland–Altman
-  limits-of-agreement span used as a tie-breaker when the top two
-  candidates' RMSE differ by less than 1%
+- Seven correction methods (Bias, OLS, Proportional, Deming (error-variance
+  ratio λ, default λ=1, user-configurable), a Weighted Deming fit using the
+  iterative Linnet algorithm (error-variance ratio λ tuned by grid search),
+  a simplified Passing–Bablok fit (median pairwise-slope regression; does
+  not include the confidence-interval or linearity-test procedures of the
+  full standard method), and a Hybrid Time-Series+Deming method with
+  independently Auto-Tuned rise/fall time constants (τ_rise, τ_fall)) plus
+  Auto (nested Leave-One-Out Cross-Validation) model selection across all
+  seven candidates, with the narrower Bland–Altman limits-of-agreement span
+  used as a tie-breaker when the top two candidates' RMSE differ by less
+  than 1%
 - Fitting-window controls with a stability score
 - Time trend, correlation, Bland–Altman, and before/after comparison
   visualizations

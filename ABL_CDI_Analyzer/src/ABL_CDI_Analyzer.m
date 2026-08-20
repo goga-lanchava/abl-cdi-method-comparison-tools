@@ -29,16 +29,18 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
         DemingLambdaEditField    matlab.ui.control.NumericEditField
         TauLabel                 matlab.ui.control.Label
         TauSpinner               matlab.ui.control.Spinner
+        TauFallLabel             matlab.ui.control.Label
+        TauFallSpinner           matlab.ui.control.Spinner
         SmoothW1Label            matlab.ui.control.Label
         SmoothW1Spinner          matlab.ui.control.Spinner
         AutoTuneButton           matlab.ui.control.Button 
         ApplyCorrectionButton    matlab.ui.control.Button
         ExportCorrectedButton    matlab.ui.control.Button
-        ShowFormulaButton    matlab.ui.control.Button
-        ComparePlotsButton   matlab.ui.control.Button 
+        ShowFormulaButton        matlab.ui.control.Button
+        ComparePlotsButton       matlab.ui.control.Button 
         CorrectionStatusLabel    matlab.ui.control.Label
-        FormulaLabel         matlab.ui.control.Label
-        FormulaTextArea      matlab.ui.control.TextArea
+        FormulaLabel             matlab.ui.control.Label
+        FormulaTextArea          matlab.ui.control.TextArea
         SmallNWarningLabel       matlab.ui.control.Label
 
         ExportButton         matlab.ui.control.Button
@@ -83,7 +85,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
         FitWindowEndEdit     matlab.ui.control.EditField
         FitWindowAutoButton  matlab.ui.control.Button
         StabilityScoreLabel  matlab.ui.control.Label
-        FitWindowShade       % patch handle  -  shaded region on time plot
+        FitWindowShade       % patch handle - shaded region on time plot
     end
 
     properties (Access = private)
@@ -107,7 +109,6 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
 
         % --- MAIN FILTERING FUNCTION ---
         % Uses Median Absolute Deviation (MAD) to filter extreme outliers.
-        % This is mathematically robust against sensor noise, unlike standard deviation.
         function cleanMask = robustCleanMask(~, xABL, yCDI)
             diffs = yCDI - xABL;
             med   = median(diffs, 'omitnan');
@@ -117,6 +118,96 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             else
                 cleanMask = true(size(diffs));
             end
+        end
+
+        % --- WEIGHTED DEMING REGRESSION (LINNET ALGORITHM) ---
+        % Iteratively computes weighted Deming regression where weight w_i = 1 / u_hat_i^2.
+        function [slope, intercept] = fitWeightedDeming(~, x, y, lambda)
+            if nargin < 4 || isempty(lambda), lambda = 1.0; end
+            n = numel(x);
+            if n < 2
+                slope = 1.0; intercept = 0.0; return;
+            end
+
+            xm = mean(x, 'omitnan'); ym = mean(y, 'omitnan');
+            sxx = sum((x - xm).^2, 'omitnan') / max(n - 1, 1);
+            syy = sum((y - ym).^2, 'omitnan') / max(n - 1, 1);
+            sxy = sum((x - xm) .* (y - ym), 'omitnan') / max(n - 1, 1);
+            
+            if abs(2 * sxy) > 1e-10
+                slope = (syy - lambda * sxx + sqrt((syy - lambda * sxx)^2 + 4 * lambda * sxy^2)) / (2 * sxy);
+            else
+                slope = 1.0;
+            end
+            if isnan(slope) || isinf(slope) || abs(slope) < 1e-4, slope = 1.0; end
+            intercept = ym - slope * xm;
+
+            for iter = 1:50
+                prev_slope = slope;
+                prev_intercept = intercept;
+
+                u_hat = 0.5 * (x + (y - intercept) / max(slope, 1e-5));
+                u_hat(abs(u_hat) < 1e-4) = 1e-4;
+                w = 1 ./ (u_hat.^2);
+                w = w / sum(w); 
+
+                x_w = sum(w .* x);
+                y_w = sum(w .* y);
+
+                dx = x - x_w;
+                dy = y - y_w;
+
+                sxx_w = sum(w .* dx.^2);
+                syy_w = sum(w .* dy.^2);
+                sxy_w = sum(w .* dx .* dy);
+
+                if abs(2 * sxy_w) > 1e-10
+                    slope = (syy_w - lambda * sxx_w + sqrt((syy_w - lambda * sxx_w)^2 + 4 * lambda * sxy_w^2)) / (2 * sxy_w);
+                else
+                    slope = 1.0;
+                end
+                if isnan(slope) || isinf(slope) || abs(slope) < 1e-4, slope = 1.0; end
+                intercept = y_w - slope * x_w;
+
+                if abs(slope - prev_slope) < 1e-5 && abs(intercept - prev_intercept) < 1e-5
+                    break;
+                end
+            end
+        end
+
+        % --- CAUSAL DYNAMIC RESPONSE FILTER ---
+        function cdi_fast = computeAsymmetricFastCDI(~, fullCDIVals, fullCDITime, w1, tau_rise, tau_fall)
+            w_sm = max(0, w1 - 1);
+            smoothed = movmean(fullCDIVals, [w_sm 0], 'omitnan');
+            if tau_rise == 0 && tau_fall == 0
+                cdi_fast = smoothed;
+            else
+                dt = minutes(diff(fullCDITime));
+                dt(dt <= 0 | ~isfinite(dt)) = 0.01;
+                dy = diff(smoothed);
+                if isempty(dy)
+                    deriv = zeros(size(fullCDIVals));
+                else
+                    deriv = [0; dy ./ dt];
+                    deriv = movmean(deriv, [w_sm 0], 'omitnan');
+                end
+                validD = deriv(~isnan(deriv) & ~isinf(deriv));
+                if ~isempty(validD)
+                    dlim = prctile(abs(validD), 95);
+                    if dlim == 0 || isnan(dlim), dlim = 10; end
+                else
+                    dlim = 10;
+                end
+                deriv = max(min(deriv, dlim), -dlim);
+                
+                tau_vec = zeros(size(deriv));
+                tau_vec(deriv >= 0) = tau_rise;
+                tau_vec(deriv < 0)  = tau_fall;
+                
+                cdi_fast = smoothed + tau_vec .* deriv;
+            end
+            cdi_fast(isnan(cdi_fast)) = fullCDIVals(isnan(cdi_fast));
+            cdi_fast = movmean(cdi_fast, [2 0], 'omitnan');
         end
 
         function [cvPct, nPairsInWindow] = computeStabilityScore(app, fitStart, fitEnd, param, pairedTimes)
@@ -150,7 +241,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                 if sum(winMask) < 2
                     winMask = true(size(pairedTimes));
                     uialert(app.UIFigure, ...
-                        'Fitting window contains fewer than 2 pairs  -  using all pairs instead.', ...
+                        'Fitting window contains fewer than 2 pairs - using all pairs instead.', ...
                         'Window Too Narrow');
                 end
             catch
@@ -319,8 +410,6 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
         end
 
         % --- DATA INGESTION: PARSE ABL ---
-        % Reads the intermittent reference samples, dynamically identifies Patient IDs,
-        % cleans headers, and returns a sanitized timetable.
         function [tbl, patientIDs] = parseABL(~, fullpath)
             fid = fopen(fullpath, 'r');
             if fid == -1
@@ -466,8 +555,6 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
         end
 
         % --- DATA INGESTION: PARSE CDI ---
-        % Parses continuous monitor log files, handling specific string formatting
-        % and converting continuous streams into a time-synced MATLAB table.
         function tbl = parseCDI(~, fullpath)
             allColNames = {'Time','pH','pCO2','pO2','TEMP','HCO3','BE','sO2','K+',...
                         'VO2','Q','BSA','pH_v','pCO2_v','pO2_v','TEMP_v','SO2_v','HCT','tHb'};
@@ -589,7 +676,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
 
         function TimeShiftSpinnerValueChanged(app, ~)
             if ~isempty(app.ABL_Table) && ~isempty(app.CDI_Table)
-                app.StatusLabel.Text = 'Auto-recalculating shift...'; 
+                app.StatusLabel.Text = 'Recalculating shift...'; 
                 drawnow;
                 AnalyzeButtonPushed(app, []);
             end
@@ -646,7 +733,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
 
         function TimeToleranceSpinnerValueChanged(app, ~)
             if ~isempty(app.ABL_Table) && ~isempty(app.CDI_Table)
-                app.StatusLabel.Text = 'Auto-recalculating tolerance...'; 
+                app.StatusLabel.Text = 'Recalculating tolerance...'; 
                 drawnow;
                 AnalyzeButtonPushed(app, []);
             end
@@ -704,9 +791,6 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
         end
 
         % --- AUTO TIME SHIFT DETECTION ---
-        % Uses grid search (cross-correlation) between -120 to +120 minutes 
-        % to find the temporal shift that maximizes the Pearson correlation (r) 
-        % between the ABL samples and the continuous CDI signal.
         function AutoShiftButtonPushed(app, ~)
             if isempty(app.ABL_Table) || isempty(app.CDI_Table)
                 uialert(app.UIFigure, 'Please load both ABL and CDI data files first.', 'Missing Data');
@@ -717,8 +801,6 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                 uialert(app.UIFigure, 'Please select a valid parameter first.', 'No Parameter');
                 return;
             end
-            
-            app.StatusLabel.Text = 'Running simulated shifts (-360 to +360)...'; drawnow;
             
             ablForAlign = app.ABL_Table;
             if ismember('PatientID', ablForAlign.Properties.VariableNames)
@@ -770,7 +852,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                     uialert(app.UIFigure, ...
                         'Fitting window contains fewer than 4 ABL draws. Widen the window or disable it for Auto-Shift.', ...
                         'Window Too Narrow');
-                    app.StatusLabel.Text = 'Auto-shift failed  -  window too narrow.';
+                    app.StatusLabel.Text = 'Auto-shift failed - window too narrow.';
                     return;
                 end
                 app.StatusLabel.Text = sprintf('Running shift search inside fitting window (%d ABL draws)...', numel(tA)); drawnow;
@@ -779,13 +861,10 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             end
             
             tolDays = minutes(app.TimeToleranceSpinner.Value);
-
-            % Array of candidate shifts (in minutes)
             shifts = -120:1:120;
             r_vals = nan(size(shifts));
             n_vals = zeros(size(shifts));
             
-            % Grid search: test every single 1-minute shift combination
             for i = 1:length(shifts)
                 shifted_tC = tC + minutes(shifts(i));
                 tC_search  = shifted_tC;
@@ -799,7 +878,6 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                 if isempty(tC_search), continue; end
 
                 mA = []; mC = [];
-                % Match ABL draws to the newly shifted CDI timeline using nearest-neighbor
                 for j = 1:length(tA)
                     [md, idx] = min(abs(tC_search - tA(j)));
                     if md <= tolDays
@@ -809,14 +887,12 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                 end
                 
                 n_vals(i) = length(mA);
-                % If we retain enough valid pairs, calculate Pearson correlation
                 if n_vals(i) >= 4 && std(mA) > 0 && std(mC) > 0
                     R = corrcoef(mA, mC);
                     r_vals(i) = R(1,2);
                 end
             end
             
-            % Discard shifts that result in massive data loss
             max_possible_pairs = max(n_vals);
             valid_idx = n_vals >= max_possible_pairs * 0.5 & n_vals >= 4;
             
@@ -824,29 +900,25 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             valid_r = r_vals(valid_idx);
             
             if isempty(valid_r) || all(isnan(valid_r))
-                uialert(app.UIFigure, 'Could not find a valid pattern match. The data might be completely flatlined or disconnected.', 'Auto-Shift Failed');
+                uialert(app.UIFigure, 'Could not find a valid pattern match. The data might be flatlined or disconnected.', 'Auto-Shift Failed');
                 app.StatusLabel.Text = 'Auto-shift failed.';
                 return;
             end
             
-            % Select the shift that produced the highest correlation coefficient
             [max_r, best_idx] = max(valid_r);
             best_shift = valid_shifts(best_idx);
             
             app.TimeShiftSpinner.Value = best_shift;
             
             if useFitWin
-                app.StatusLabel.Text = sprintf('Best shift (window): %d min (r = %.3f)', best_shift, max_r);
+                app.StatusLabel.Text = sprintf('Best correlation shift (window): %d min (r = %.3f)', best_shift, max_r);
             else
-                app.StatusLabel.Text = sprintf('Best shift found: %d min (r = %.3f)', best_shift, max_r);
+                app.StatusLabel.Text = sprintf('Best correlation shift: %d min (r = %.3f)', best_shift, max_r);
             end
             AnalyzeButtonPushed(app, []); 
         end
         
-        % --- AUTO-TUNE HYBRID MODEL PARAMETERS ---
-        % Performs a 3D Grid Search over smoothing window (W1), derivative weight (Tau), 
-        % and Deming ratio (Lambda) to find the parameters that minimize RMSE 
-        % while penalizing excessive noise (roughness) introduced by the derivative.
+        % --- AUTO-TUNE HYBRID & WEIGHTED DEMING PARAMETERS ---
         function AutoTuneButtonPushed(app, ~)
             if isempty(app.Aligned_Data) || ~isfield(app.Stats, 'TimeShift')
                 uialert(app.UIFigure, 'Please run Analysis first to extract paired data.', 'No Data');
@@ -881,7 +953,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                 return;
             end
             
-            app.StatusLabel.Text = 'Auto-tuning Hybrid Parameters (Grid Search)...'; drawnow;
+            app.StatusLabel.Text = 'Auto-tuning Hybrid & Weighted Deming Parameters...'; drawnow;
             
             shiftMins = app.Stats.TimeShift;
             fullCDITime = app.CDI_Table.Time + minutes(shiftMins);
@@ -898,28 +970,19 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             raw_cdi_paired = fullCDIVals(validCDIMask);
             raw_cdi_paired = raw_cdi_paired(matchIndices);
             
-            raw_diffs_init = raw_cdi_paired - xABL;
-            median_diff_init = median(raw_diffs_init, 'omitnan');
-            mad_diff_init = median(abs(raw_diffs_init - median_diff_init), 'omitnan');
-            
-            if mad_diff_init > 0
-                globalCleanMask = abs(raw_diffs_init - median_diff_init) <= (4.5 * mad_diff_init);
-            else
-                globalCleanMask = true(size(raw_diffs_init));
-            end
+            globalCleanMask = robustCleanMask(app, xABL, raw_cdi_paired);
             xClean_global = xABL(globalCleanMask);
             
             best_rmse = inf;
-            best_tau  = 0.0;
-            best_lam  = 1.0;
-            best_w1   = app.SmoothW1Spinner.Value;
+            best_tau_r = 0.0;
+            best_tau_f = 0.0;
+            best_lam = 1.0;
+            best_w1  = app.SmoothW1Spinner.Value;
             
-            % Search Grids for hyperparameters
-            tau_cands = 0:0.5:10;
+            tau_cands = 0:1.0:8;
             lam_cands = [0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0, 10.0];
             w1_cands  = [4, 8, 12, 16, 24, 32];
             
-            % Compute baseline noise (roughness) to penalize later
             winMaskCDI = searchTimes >= min(validTimes) & searchTimes <= max(validTimes);
             raw_valid_full = fullCDIVals(validCDIMask);
             raw_valid_win = raw_valid_full(winMaskCDI);
@@ -931,112 +994,50 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                 raw_roughness = 1;
             end
             
-            % Iterate through all parameter combinations
             for w1 = w1_cands
-            for t = tau_cands
-                % Step 1: Pre-smoothing
-                smoothed = movmean(fullCDIVals, [w1 0], 'omitnan');
-                
-                % Step 2: Calculate bounded derivative (rate of change)
-                if t == 0
-                    cdi_fast_full = smoothed;
-                else
-                    dt = minutes(diff(fullCDITime));
-                    dt(dt == 0) = 0.01;
-                    dy = diff(smoothed);
-                    if isempty(dy)
-                        deriv = zeros(size(fullCDIVals));
+                for tr = tau_cands
+                    tf = tr; % Strict alignment with LOO-CV symmetric rise=fall rule
+                    cdi_fast_full = computeAsymmetricFastCDI(app, fullCDIVals, fullCDITime, w1, tr, tf);
+                    searchVals = cdi_fast_full(validCDIMask);
+                    cdi_fast_paired = searchVals(matchIndices);
+                    
+                    sv_win = searchVals(winMaskCDI);
+                    rv = sv_win(~isnan(sv_win));
+                    if numel(rv) > 2
+                        base_corr_rough = std(diff(rv), 'omitnan');
                     else
-                        deriv = [0; dy ./ dt];
-                        deriv = movmean(deriv, [w1 0], 'omitnan');
+                        base_corr_rough = raw_roughness;
                     end
                     
-                    % Physiological speed limit to prevent noise spikes
-                    validDerivs = deriv(~isnan(deriv) & ~isinf(deriv));
-                    if ~isempty(validDerivs)
-                        derivLimit = prctile(abs(validDerivs), 95);
-                        if derivLimit == 0 || isnan(derivLimit), derivLimit = 10; end
-                    else
-                        derivLimit = 10;
-                    end
-                    deriv = max(min(deriv, derivLimit), -derivLimit);
-                    
-                    % Calculate Anticipatory signal
-                    cdi_fast_full = fullCDIVals + t .* deriv;
-                end
-                
-                nanMask = isnan(cdi_fast_full);
-                cdi_fast_full(nanMask) = fullCDIVals(nanMask);
-                cdi_fast_full = movmean(cdi_fast_full, [3 0], 'omitnan'); % Post-smoothing
-                
-                searchVals = cdi_fast_full(validCDIMask);
-                cdi_fast_paired = searchVals(matchIndices);
-                
-                sv_win = searchVals(winMaskCDI);
-                rv = sv_win(~isnan(sv_win));
-                if numel(rv)>2
-                    base_corr_rough = std(diff(rv), 'omitnan');
-                else
-                    base_corr_rough = raw_roughness;
-                end
-                
-                for l = lam_cands
-                    
-                    % Deming regression mapping (accounting for dual-axis error variance)
-                    yClean = cdi_fast_paired(globalCleanMask);
-                    n2 = numel(xClean_global);
-                    
-                    if n2 >= 2
-                        xm2 = mean(xClean_global, 'omitnan'); ym2 = mean(yClean, 'omitnan');
-                        sxx2 = sum((xClean_global - xm2).^2, 'omitnan') / (n2-1);
-                        syy2 = sum((yClean - ym2).^2, 'omitnan') / (n2-1);
-                        sxy2 = sum((xClean_global - xm2).*(yClean - ym2), 'omitnan') / (n2-1);
+                    for l = lam_cands
+                        [slope, intercept] = fitWeightedDeming(app, xClean_global, cdi_fast_paired(globalCleanMask), l);
+                        yCorr = (cdi_fast_paired - intercept) / slope;
+                        rmse = sqrt(mean((yCorr(globalCleanMask) - xClean_global).^2, 'omitnan'));
                         
-                        if abs(2*sxy2) > 1e-10
-                            slope = (syy2 - l*sxx2 + sqrt((syy2 - l*sxx2)^2 + 4*l*sxy2^2)) / (2*sxy2);
-                        else
-                            slope = 1;
+                        corr_roughness = base_corr_rough / abs(slope);
+                        if isnan(corr_roughness), corr_roughness = raw_roughness; end
+                        roughness_ratio = corr_roughness / raw_roughness;
+                        
+                        smoothness_penalty = max(0, roughness_ratio - 1.0) * 0.25 * rmse;
+                        penalised_rmse = rmse + smoothness_penalty;
+                        
+                        if penalised_rmse < best_rmse
+                            best_rmse = penalised_rmse;
+                            best_tau_r = tr;
+                            best_tau_f = tf;
+                            best_lam = l;
+                            best_w1  = w1;
                         end
-                        if isnan(slope) || isinf(slope) || abs(slope) < 1e-4, slope = 1; end
-                        intercept = ym2 - slope * xm2;
-                        if isnan(intercept), intercept = 0; end
-                    else
-                        slope = 1; intercept = 0; 
                     end
-                    
-                    yCorr = (cdi_fast_paired - intercept) / slope;
-                    
-                    % Objective Function: Penalized Root Mean Square Error (RMSE)
-                    rmse = sqrt(mean((yCorr(globalCleanMask) - xClean_global).^2, 'omitnan'));
-                    
-                    corr_roughness = base_corr_rough / abs(slope);
-                    if isnan(corr_roughness), corr_roughness = raw_roughness; end
-                    roughness_ratio = corr_roughness / raw_roughness;
-                    
-                    % Heavily penalize the model if the derivative makes the signal too erratic
-                    smoothness_penalty = max(0, roughness_ratio - 1.0) * 0.3 * rmse;
-                    penalised_rmse = rmse + smoothness_penalty;
-                    
-                    % Save state if this is the best iteration
-                    if penalised_rmse < best_rmse
-                        best_rmse = penalised_rmse;
-                        best_tau = t;
-                        best_lam = l;
-                        best_w1  = w1;
-                    end
-                end  
-            end  
-            end  
+                end
+            end
             
-            app.TauSpinner.Value = best_tau;
+            app.TauSpinner.Value = best_tau_r;
+            app.TauFallSpinner.Value = best_tau_f;
             app.SmoothW1Spinner.Value = best_w1;
             app.DemingLambdaEditField.Value = best_lam;
             app.CorrectionMethodDropDown.Value = 'Hybrid (Time-Series + Deming)';
-            if best_tau == 0
-                app.StatusLabel.Text = sprintf('Auto-Tune: τ=0 (Deming only) | W1=%d | lambda=%.2f  -  derivative suppressed for smooth output', best_w1, best_lam);
-            else
-                app.StatusLabel.Text = sprintf('Auto-Tune Complete! τ: %.1f | W1: %d | λ: %.2f (RMSE+smoothness optimised)', best_tau, best_w1, best_lam);
-            end
+            app.StatusLabel.Text = sprintf('Auto-Tune: τ_r=%.1f τ_f=%.1f | W1=%d | λ=%.2f', best_tau_r, best_tau_f, best_w1, best_lam);
             
             ApplyCorrectionButtonPushed(app, []);
         end
@@ -1068,8 +1069,22 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                 titleStr  = sprintf('After Correction (r=%.3f)', r_val);
             else
                 yVals = app.Stats.yCDI;
-                p_val = app.Stats.p;
-                r_val = app.Stats.r;
+                % Mask baseline to match the currently applied MAD filter
+                if isfield(app.CorrectionModel, 'yCorrected') && ~isempty(app.CorrectionModel.yCorrected)
+                    yCorrTmp = app.CorrectionModel.yCorrected;
+                    if numel(yCorrTmp) == numel(xABL)
+                        validPairs = ~isnan(yCorrTmp) & ~isnan(xABL);
+                        yVals = yVals(validPairs);
+                        xABL = xABL(validPairs);
+                    end
+                end
+                if numel(xABL) >= 2 && std(xABL, 'omitnan') > 0
+                    p_val = polyfit(xABL, yVals, 1);
+                    R_tmp = corrcoef(xABL, yVals);
+                    r_val = R_tmp(1,2);
+                else
+                    p_val = app.Stats.p; r_val = app.Stats.r;
+                end
                 sc = scatter(app.CorrelationAxes, xABL, yVals, 50, 'filled', ...
                     'MarkerFaceColor', [0 0.4470 0.7410], 'DisplayName', sprintf('Paired samples (r=%.3f)', r_val));
                 sc.DataTipTemplate.DataTipRows(1).Label = 'ABL';
@@ -1136,8 +1151,17 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                 lineColor   = [0.1 0.6 0.1];
             else
                 yVals = app.Stats.yCDI;
+                % Mask baseline to match the currently applied MAD filter
+                if isfield(app.CorrectionModel, 'yCorrected') && ~isempty(app.CorrectionModel.yCorrected)
+                    yCorrTmp = app.CorrectionModel.yCorrected;
+                    if numel(yCorrTmp) == numel(xABL)
+                        validPairs = ~isnan(yCorrTmp) & ~isnan(xABL);
+                        yVals = yVals(validPairs);
+                        xABL = xABL(validPairs);
+                    end
+                end
                 diffVals = yVals - xABL;
-                bias = app.Stats.bias; sd = app.Stats.sd;
+                bias = mean(diffVals, 'omitnan'); sd = std(diffVals, 'omitnan');
                 titleStr    = 'Bland-Altman';
                 markerColor = [0 0.4470 0.7410];
                 legendName  = sprintf('Data  Bias=%.4f  SD=%.4f', bias, sd);
@@ -1184,8 +1208,6 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
         end
 
         % --- CORE ANALYSIS AND SYNCHRONIZATION ---
-        % Aligns two different sampling frequencies (Continuous CDI vs Intermittent ABL)
-        % using MATLAB's 'synchronize' built-in function, and calculates base statistics.
         function AnalyzeButtonPushed(app, ~)
             if isempty(app.ABL_Table) || isempty(app.CDI_Table)
                 uialert(app.UIFigure, 'Please load both ABL and CDI data files first.', 'Missing Data');
@@ -1219,17 +1241,13 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
 
             abl_tt = table2timetable(ablForAlign);
             
-            % Apply manual or auto-detected time shift
             shiftMins = app.TimeShiftSpinner.Value;
             shifted_CDI = app.CDI_Table;
             shifted_CDI.Time = shifted_CDI.Time + minutes(shiftMins);
             cdi_tt = table2timetable(shifted_CDI);
 
-            % Synchronize timetables: Match each ABL draw to the 'nearest' CDI timestamp
             aligned = synchronize(abl_tt, cdi_tt, 'first', 'nearest');
 
-            % Filter out pairs that fall outside the user-defined acceptable time tolerance
-            abl_times = abl_tt.Time;
             cdi_times = cdi_tt.Time;
             n = height(aligned);
             timeDiff = nan(n,1);
@@ -1305,7 +1323,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                 xABL_stat = xABL;
                 yCDI_stat = yCDI;
                 if app.FitWindowCheckBox.Value
-                    app.StatusLabel.Text = 'Warning: fitting window has <2 pairs  -  using all pairs for statistics.';
+                    app.StatusLabel.Text = 'Warning: fitting window has <2 pairs - using all pairs for statistics.';
                 end
             end
 
@@ -1367,11 +1385,11 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
 
             slopeDev = abs(app.Stats.slope - 1.0);
             if slopeDev > 0.5
-                app.SlopeWarningLabel.Text = sprintf('⚠ Slope=%.2f — strong proportional error. Bias correction inappropriate.', app.Stats.slope);
-                app.SlopeWarningLabel.FontColor = [0.8 0.1 0.1];
+                app.SlopeWarningLabel.Text = sprintf('⚠ Slope = %.2f: range-dependent disagreement detected; proportional models may be informative.', app.Stats.slope);
+                app.SlopeWarningLabel.FontColor = [0.75 0.45 0.0];
                 app.SlopeWarningLabel.Visible = 'on';
             elseif slopeDev > 0.25
-                app.SlopeWarningLabel.Text = sprintf('⚠ Slope=%.2f — proportional error present. Prefer Deming/OLS over Bias.', app.Stats.slope);
+                app.SlopeWarningLabel.Text = sprintf('⚠ Slope = %.2f: possible proportional disagreement.', app.Stats.slope);
                 app.SlopeWarningLabel.FontColor = [0.75 0.45 0.0];
                 app.SlopeWarningLabel.Visible = 'on';
             else
@@ -1380,7 +1398,6 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             app.CorrectionModel        = struct();  
             app.SmallNWarningLabel.Visible = 'off';
             app.CorrQualityLabel.Text  = '';
-            app.SlopeWarningLabel.Visible = 'off';
             
             app.ShowCorrectedSwitch.Value = false;
             app.ShowCorrectedSwitch.Enable = 'off';
@@ -1408,7 +1425,6 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                 app.KeptCorrectionLines = {};
             end
             app.KeptCorrectionData = {};
-            
 
             cla(app.TimeAxes);
             hold(app.TimeAxes, 'on');
@@ -1483,12 +1499,11 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                 end
             end
 
+            patLbl = app.PatientIDDropDown.Value;
             if ~hasOverlap
-                patLbl = app.PatientIDDropDown.Value;
-                title(app.TimeAxes, [param '  —  ' patLbl '  ⚠ No ABL-CDI overlap detected']);
+                title(app.TimeAxes, [param ' — ' patLbl ' ⚠ No ABL-CDI overlap detected']);
             else
-                patLbl = app.PatientIDDropDown.Value;
-                title(app.TimeAxes, [param '  —  Patient: ' patLbl]);
+                title(app.TimeAxes, [param ' — Patient: ' patLbl]);
             end
 
             legend(app.TimeAxes, 'Location', 'best');
@@ -1568,6 +1583,16 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                         nm=min(numel(yCorr),numel(xABL));
                         yCorr=yCorr(1:nm); xABL=xABL(1:nm); yOrig=yOrig(1:nm);
                     end
+                    
+                    % Filter baseline so Before/After compare the exact same pairs
+                    validPairs = ~isnan(yCorr) & ~isnan(xABL);
+                    xABL = xABL(validPairs);
+                    yOrig = yOrig(validPairs);
+                    yCorr = yCorr(validPairs);
+                    
+                    biasO = mean(yOrig - xABL, 'omitnan');
+                    sdO = std(yOrig - xABL, 'omitnan');
+                    
                     diffCorr = yCorr-xABL;
                     biasC = mean(diffCorr,'omitnan'); sdC = std(diffCorr,'omitnan');
                     loaUpC = biasC+1.96*sdC; loaLoC = biasC-1.96*sdC;
@@ -1618,7 +1643,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
 
                 axCB = axes(hFig,'Position',[0.05 0.08 0.18 0.36]);
                 hold(axCB,'on');
-                sc=scatter(axCB,xABL,yOrig,30,'filled','MarkerFaceColor',[0 0.4470 0.7410],...
+                scatter(axCB,xABL,yOrig,30,'filled','MarkerFaceColor',[0 0.4470 0.7410],...
                     'DisplayName',sprintf('r=%.3f',app.Stats.r));
                 plot(axCB,[sMin sMax],[sMin sMax],'k--','LineWidth',0.8,'DisplayName','Identity');
                 if ~any(isnan(app.Stats.p))
@@ -1770,7 +1795,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                 end
                 rectangle('Parent',ax5,'Position',[0.01 0.01 0.98 0.98],...
                     'EdgeColor',[0.4 0.4 0.4],'LineWidth',1);
-                text(ax5, 0.05, 0.96, sprintf('Statistics  -  %s', app.CurrentParam), ...
+                text(ax5, 0.05, 0.96, sprintf('Statistics - %s', app.CurrentParam), ...
                     'Units','normalized','FontSize',9,'FontWeight','bold',...
                     'Color',[0.1 0.1 0.5],'Interpreter','none','FontName','Consolas');
                 text(ax5, 0.05, 0.90, sprintf('Patient: %s', app.PatientIDDropDown.Value), ...
@@ -1797,10 +1822,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             end
         end
 
-        % --- MODEL APPLICATION / LOO-CV SELECTION ---
-        % Applies the chosen mathematical formula (OLS, Bias, Deming, etc.) to the continuous data.
-        % If 'Auto' is selected, tests all 6 models via Leave-One-Out Cross Validation
-        % and selects the model with the lowest Root Mean Square Error (RMSE).
+        % --- MODEL APPLICATION / 7-MODEL LOO-CV SELECTION ---
         function ApplyCorrectionButtonPushed(app, ~)
             if isempty(app.Aligned_Data) || ~isfield(app.Stats, 'TimeShift')
                 uialert(app.UIFigure, 'Please run analysis first.', 'No Data');
@@ -1848,79 +1870,57 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             app.CorrectionModel.fitWindowUsed = app.FitWindowCheckBox.Value;
             app.CorrectionModel.nFitPairs = numel(xABL_fit);
             yCorrected = []; 
+
+            shiftMins   = app.Stats.TimeShift;
+            fullCDITime = app.CDI_Table.Time + minutes(shiftMins);
+            fullCDIVals = app.CDI_Table.(param);
             
             switch method
                 case 'Hybrid (Time-Series + Deming)'
-                    tau = app.TauSpinner.Value;
-                    lam = app.DemingLambdaEditField.Value;
-                    shiftMins = app.Stats.TimeShift;
-                    fullCDITime = app.CDI_Table.Time + minutes(shiftMins);
-                    fullCDIVals = app.CDI_Table.(param);
+                    tau_r = app.TauSpinner.Value;
+                    tau_f = app.TauFallSpinner.Value;
+                    lam   = app.DemingLambdaEditField.Value;
+                    w1    = app.SmoothW1Spinner.Value;
                     
-                    smoothed = movmean(fullCDIVals, [app.SmoothW1Spinner.Value 0], 'omitnan');
-                    if tau == 0
-                        cdi_fast_full = smoothed;
-                        cdi_fast_full(isnan(cdi_fast_full)) = fullCDIVals(isnan(cdi_fast_full));
-                    else
-                        dt = minutes(diff(fullCDITime));
-                        dt(dt == 0) = 0.01;
-                        dy = diff(smoothed);
-                        if isempty(dy), deriv = zeros(size(fullCDIVals));
-                        else
-                            deriv = [0; dy ./ dt];
-                            deriv = movmean(deriv, [app.SmoothW1Spinner.Value 0], 'omitnan');
-                        end
-                        validDerivs = deriv(~isnan(deriv) & ~isinf(deriv));
-                        if ~isempty(validDerivs)
-                            derivLimit = prctile(abs(validDerivs), 95);
-                            if derivLimit == 0 || isnan(derivLimit), derivLimit = 10; end
-                        else, derivLimit = 10;
-                        end
-                        deriv = max(min(deriv, derivLimit), -derivLimit);
-                        cdi_fast_full = fullCDIVals + tau .* deriv;
-                        cdi_fast_full(isnan(cdi_fast_full)) = fullCDIVals(isnan(cdi_fast_full));
-                    end
-                    cdi_fast_full = movmean(cdi_fast_full, [3 0], 'omitnan');
-                    validTimes = pairedTimes;
+                    cdi_fast_full = computeAsymmetricFastCDI(app, fullCDIVals, fullCDITime, w1, tau_r, tau_f);
+                    validCDIMask  = ~isnan(fullCDIVals);
+                    searchTimes   = fullCDITime(validCDIMask);
+                    searchVals    = cdi_fast_full(validCDIMask);
                     cdi_fast_paired = zeros(size(xABL));
-                    validCDIMask = ~isnan(fullCDIVals);
-                    searchTimes = fullCDITime(validCDIMask);
-                    searchVals = cdi_fast_full(validCDIMask);
                     for k = 1:numel(xABL)
-                        [~, bestIdx] = min(abs(searchTimes - validTimes(k)));
+                        [~, bestIdx] = min(abs(searchTimes - pairedTimes(k)));
                         cdi_fast_paired(k) = searchVals(bestIdx);
                     end
                     cdi_fast_paired_fit = cdi_fast_paired(fitWinMask);
                     cleanMask = robustCleanMask(app, xABL_fit, cdi_fast_paired_fit);
                     xClean = xABL_fit(cleanMask);
                     yClean = cdi_fast_paired_fit(cleanMask);
-                    n2 = numel(xClean);
-                    if n2 >= 2
-                        xm2 = mean(xClean,'omitnan'); ym2 = mean(yClean,'omitnan');
-                        sxx2 = sum((xClean-xm2).^2,'omitnan')/(n2-1);
-                        syy2 = sum((yClean-ym2).^2,'omitnan')/(n2-1);
-                        sxy2 = sum((xClean-xm2).*(yClean-ym2),'omitnan')/(n2-1);
-                        if abs(2*sxy2)>1e-10
-                            slope=(syy2-lam*sxx2+sqrt((syy2-lam*sxx2)^2+4*lam*sxy2^2))/(2*sxy2);
-                        else, slope=1;
-                        end
-                        if isnan(slope)||isinf(slope)||abs(slope)<1e-4, slope=1; end
-                        intercept=ym2-slope*xm2;
-                        if isnan(intercept), intercept=0; end
-                    else, slope=1; intercept=0;
-                    end
+                    
+                    [slope, intercept] = fitWeightedDeming(app, xClean, yClean, lam);
                     yCorrected = (cdi_fast_paired(fitWinMask) - intercept) / slope;
                     yCorrected(~cleanMask) = NaN;
+                    
                     app.CorrectionModel.type = 'hybrid';
-                    app.CorrectionModel.tau = tau;
+                    app.CorrectionModel.tau_rise = tau_r;
+                    app.CorrectionModel.tau_fall = tau_f;
                     app.CorrectionModel.lam = lam;
                     app.CorrectionModel.slope = slope;
                     app.CorrectionModel.intercept = intercept;
-                    if tau == 0
-                        app.CorrectionModel.formula = sprintf('Step 1: CDI_s = movmean(CDI_raw, [%d 0])\nStep 2: CDI_fast = CDI_s   [tau=0: derivative skipped]\nStep 3: CDI_fast = movmean(CDI_fast, [3 0])\nStep 4: CDI_corrected = (CDI_fast - %.4f) / %.4f\n(Fitted on %d/%d window pairs, %d robust  -  smooth mode)', app.SmoothW1Spinner.Value, intercept, slope, numel(xABL_fit), numel(xABL), sum(cleanMask));
-                    else
-                        app.CorrectionModel.formula = sprintf('Step 1: CDI_s = movmean(CDI_raw, [%d 0])\nStep 2: dCDI/dt = movmean(diff(CDI_s)/dt, [%d 0])\nStep 3: CDI_fast = CDI_raw + %.1f * (dCDI/dt)\nStep 4: CDI_fast = movmean(CDI_fast, [3 0])   [post-smooth]\nStep 5: CDI_corrected = (CDI_fast - %.4f) / %.4f\n(Fitted on %d/%d window pairs, %d robust)', app.SmoothW1Spinner.Value, app.SmoothW1Spinner.Value, tau, intercept, slope, numel(xABL_fit), numel(xABL), sum(cleanMask));
-                    end
+                    app.CorrectionModel.formula = sprintf('Step 1: CDI_s = movmean(CDI_raw, [%d 0])\nStep 2: dCDI/dt = movmean(diff(CDI_s)/dt, [%d 0])\nStep 3: CDI_fast = CDI_s + [τ_r=%.1f / τ_f=%.1f] * (dCDI/dt)\nStep 4: CDI_fast = movmean(CDI_fast, [2 0])\nStep 5: CDI_corrected = (CDI_fast - %.4f) / %.4f  [Linnet Weighted Deming λ=%.2f]\nHybrid filtering is causal: current output uses current and prior CDI samples only.', max(0, w1-1), max(0, w1-1), tau_r, tau_f, intercept, slope, lam);
+
+                case 'Weighted Deming (Linnet)'
+                    cleanMask = robustCleanMask(app, xABL_fit, yCDI_fit);
+                    lam = app.DemingLambdaEditField.Value;
+                    xC = xABL_fit(cleanMask); yC = yCDI_fit(cleanMask);
+                    [slope, intercept] = fitWeightedDeming(app, xC, yC, lam);
+                    yCorrected = (yCDI_fit - intercept) / slope;
+                    yCorrected(~cleanMask) = NaN;
+                    app.CorrectionModel.type = 'weighted_deming';
+                    app.CorrectionModel.slope = slope;
+                    app.CorrectionModel.intercept = intercept;
+                    app.CorrectionModel.lam = lam;
+                    app.DemingLambdaEditField.Value = lam;
+                    app.CorrectionModel.formula = sprintf('Model: Raw_CDI = %.4f*ABL %+.4f  [Linnet Weighted Deming λ=%.2f]\nCorrected = (Raw_CDI %+.4f) / %.4f\n(Fitted on %d/%d window pairs, %d robust [|diff - med| <= 4.5*MAD])', slope, intercept, lam, -intercept, slope, numel(xABL_fit), numel(xABL), sum(cleanMask));
 
                 case 'Bias Correction'
                     cleanMask = robustCleanMask(app, xABL_fit, yCDI_fit);
@@ -1929,7 +1929,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                     yCorrected(~cleanMask) = NaN;
                     app.CorrectionModel.type = 'bias';
                     app.CorrectionModel.bias = bias;
-                    app.CorrectionModel.formula = sprintf('Model: Raw_CDI = ABL %+.4f\nCorrected = Raw_CDI %+.4f\n(Fitted on %d/%d window pairs, %d robust)', bias, -bias, numel(xABL_fit), numel(xABL), sum(cleanMask));
+                    app.CorrectionModel.formula = sprintf('Model: Raw_CDI = ABL %+.4f\nCorrected = Raw_CDI %+.4f\n(Fitted on %d/%d window pairs, %d robust [|diff - med| <= 4.5*MAD])', bias, -bias, numel(xABL_fit), numel(xABL), sum(cleanMask));
                     
                 case 'OLS (ABL is X)'
                     cleanMask = robustCleanMask(app, xABL_fit, yCDI_fit);
@@ -1944,7 +1944,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                     app.CorrectionModel.type = 'ols_abl_x';
                     app.CorrectionModel.slope = slope;
                     app.CorrectionModel.intercept = intercept;
-                    app.CorrectionModel.formula = sprintf('Model: Raw_CDI = %.4f*ABL %+.4f\nCorrected = (Raw_CDI %+.4f) / %.4f\n(Fitted on %d/%d window pairs, %d robust)', slope, intercept, -intercept, slope, numel(xABL_fit), numel(xABL), sum(cleanMask));
+                    app.CorrectionModel.formula = sprintf('Model: Raw_CDI = %.4f*ABL %+.4f\nCorrected = (Raw_CDI %+.4f) / %.4f\n(Fitted on %d/%d window pairs, %d robust [|diff - med| <= 4.5*MAD])', slope, intercept, -intercept, slope, numel(xABL_fit), numel(xABL), sum(cleanMask));
 
                 case 'Proportional Correction'
                     cleanMask = robustCleanMask(app, xABL_fit, yCDI_fit);
@@ -1954,7 +1954,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                     yCorrected(~cleanMask) = NaN;
                     app.CorrectionModel.type = 'proportional';
                     app.CorrectionModel.ratio = ratio;
-                    app.CorrectionModel.formula = sprintf('Ratio (ABL/CDI) = %.4f\nCorrected = Raw_CDI * %.4f\n(Fitted on %d/%d window pairs, %d robust)', ratio, ratio, numel(xABL_fit), numel(xABL), sum(cleanMask));
+                    app.CorrectionModel.formula = sprintf('Ratio (ABL/CDI) = %.4f\nCorrected = Raw_CDI * %.4f\n(Fitted on %d/%d window pairs, %d robust [|diff - med| <= 4.5*MAD])', ratio, ratio, numel(xABL_fit), numel(xABL), sum(cleanMask));
                     
                 case 'Deming Regression'
                     cleanMask = robustCleanMask(app, xABL_fit, yCDI_fit);
@@ -1978,7 +1978,8 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                     app.CorrectionModel.type = 'deming';
                     app.CorrectionModel.slope = slope;
                     app.CorrectionModel.intercept = intercept;
-                    app.CorrectionModel.formula = sprintf('Model: Raw_CDI = %.4f*ABL %+.4f\nCorrected = (Raw_CDI %+.4f) / %.4f\n(Fitted on %d/%d window pairs, %d robust)', slope, intercept, -intercept, slope, numel(xABL_fit), numel(xABL), sum(cleanMask));
+                    app.CorrectionModel.lam = lam;
+                    app.CorrectionModel.formula = sprintf('Model: Raw_CDI = %.4f*ABL %+.4f  [Standard Deming λ=%.2f]\nCorrected = (Raw_CDI %+.4f) / %.4f\n(Fitted on %d/%d window pairs, %d robust [|diff - med| <= 4.5*MAD])', slope, intercept, lam, -intercept, slope, numel(xABL_fit), numel(xABL), sum(cleanMask));
 
                 case 'Passing-Bablok'
                     cleanMask = robustCleanMask(app, xABL_fit, yCDI_fit);
@@ -2005,27 +2006,31 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                     app.CorrectionModel.type = 'passing-bablok';
                     app.CorrectionModel.slope = slope;
                     app.CorrectionModel.intercept = intercept;
-                    app.CorrectionModel.formula = sprintf('Model: Raw_CDI = %.4f*ABL %+.4f\nCorrected = (Raw_CDI %+.4f) / %.4f\n(Fitted on %d/%d window pairs, %d robust)', slope, intercept, -intercept, slope, numel(xABL_fit), numel(xABL), sum(cleanMask));
+                    app.CorrectionModel.formula = sprintf('Model: Raw_CDI = %.4f*ABL %+.4f  [Simplified Passing-Bablok]\nCorrected = (Raw_CDI %+.4f) / %.4f\n(Fitted on %d/%d window pairs, %d robust [|diff - med| <= 4.5*MAD])', slope, intercept, -intercept, slope, numel(xABL_fit), numel(xABL), sum(cleanMask));
 
                 case 'Auto (Best Model)'
-                    app.StatusLabel.Text = 'Auto: optimising parameters...'; drawnow;
+                    app.StatusLabel.Text = 'Auto: running strict out-of-sample LOO-CV (7 candidate models)...'; drawnow;
 
-                    candidateNames   = {'Bias Correction','OLS (ABL is X)','Proportional Correction','Deming Regression','Passing-Bablok','Hybrid (Time-Series + Deming)'};
-                    candidateRMSE    = nan(1,6);
-                    candidateLoASpan = nan(1,6);
+                    % Corrected literal LaTeX slashes to Unicode so UI doesn't break rendering
+                    candidateNames   = {'Bias Correction', ...
+                                        'OLS (ABL is X)', ...
+                                        'Proportional Correction', ...
+                                        'Deming Regression (fixed λ=1)', ...
+                                        'Weighted Deming (Linnet, tuned λ)', ...
+                                        'Passing-Bablok (simplified)', ...
+                                        'Hybrid (Time-Series + Deming)'};
+                    candidateRMSE    = nan(1, 7);
+                    candidateLoASpan = nan(1, 7);
                     n = numel(xABL_fit);
 
                     lam_grid  = [0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0, 10.0];
-                    tau_grid  = 0:0.5:10;
+                    tau_grid  = 0:1.0:8;
                     w1_grid   = [4, 8, 12, 16, 24, 32];
 
-                    shiftMins    = app.Stats.TimeShift;
-                    fullCDITime  = app.CDI_Table.Time + minutes(shiftMins);
-                    fullCDIVals  = app.CDI_Table.(param);
                     validCDIMask = ~isnan(fullCDIVals);
                     searchTimes  = fullCDITime(validCDIMask);
+                    fitTimes     = pairedTimes(fitWinMask);
 
-                    fitTimes = pairedTimes(fitWinMask);
                     if numel(fitTimes) >= 2
                         winStartH = min(fitTimes);
                         winEndH   = max(fitTimes);
@@ -2034,317 +2039,181 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                         winMaskCDIH = true(size(searchTimes));
                     end
 
-                    nTau = numel(tau_grid); nW1 = numel(w1_grid);
-                    fastPaired    = zeros(numel(xABL),     nTau, nW1);
-                    fastPairedFit = zeros(numel(xABL_fit), nTau, nW1);
+                    % Pre-compute fast dynamic CDI traces across candidate grids to accelerate LOO folds
+                    nTau = numel(tau_grid); 
+                    nW1  = numel(w1_grid);
+                    fastPairedFit = zeros(n, nTau, nW1);
                     fastRoughnessWin = zeros(nTau, nW1);
 
                     for wi = 1:nW1
                         w1v = w1_grid(wi);
-                        smoothed = movmean(fullCDIVals, [w1v 0], 'omitnan');
                         for ti = 1:nTau
                             tv = tau_grid(ti);
-                            if tv == 0
-                                cdi_fast_full = smoothed;
-                            else
-                                dt = minutes(diff(fullCDITime));
-                                dt(dt==0) = 0.01;
-                                dy = diff(smoothed);
-                                if isempty(dy)
-                                    deriv = zeros(size(fullCDIVals));
-                                else
-                                    deriv = movmean([0; dy./dt], [w1v 0], 'omitnan');
-                                end
-                                vd = deriv(~isnan(deriv)&~isinf(deriv));
-                                if ~isempty(vd)
-                                    dlim = prctile(abs(vd),95);
-                                    if dlim==0||isnan(dlim), dlim=10; end
-                                else, dlim=10;
-                                end
-                                deriv = max(min(deriv,dlim),-dlim);
-                                cdi_fast_full = fullCDIVals + tv.*deriv;
-                                cdi_fast_full(isnan(cdi_fast_full)) = fullCDIVals(isnan(cdi_fast_full));
-                            end
-                            cdi_fast_full = movmean(cdi_fast_full,[3 0],'omitnan');
+                            cdi_fast_full = computeAsymmetricFastCDI(app, fullCDIVals, fullCDITime, w1v, tv, tv);
                             sv = cdi_fast_full(validCDIMask);
                             
-                            for k=1:numel(xABL)
-                                [~,bi]=min(abs(searchTimes-pairedTimes(k)));
-                                fastPaired(k,ti,wi) = sv(bi);
+                            for k = 1:n
+                                [~, bi] = min(abs(searchTimes - fitTimes(k)));
+                                fastPairedFit(k, ti, wi) = sv(bi);
                             end
-                            fastPairedFit(:,ti,wi) = fastPaired(fitWinMask,ti,wi);
                             
                             sv_win = sv(winMaskCDIH);
                             rv = sv_win(~isnan(sv_win));
-                            if numel(rv)>2
-                                fastRoughnessWin(ti,wi) = std(diff(rv),'omitnan');
+                            if numel(rv) > 2
+                                fastRoughnessWin(ti, wi) = std(diff(rv), 'omitnan');
                             else
-                                fastRoughnessWin(ti,wi) = NaN;
+                                fastRoughnessWin(ti, wi) = 1.0;
                             end
                         end
                     end
-
-                    best_lam_deming = lam_grid(1);
-                    best_rmse_deming = inf;
-                    cMaskD = robustCleanMask(app, xABL_fit, yCDI_fit);
-                    xCD = xABL_fit(cMaskD); yCD = yCDI_fit(cMaskD);
-                    nCD = numel(xCD);
-                    if nCD >= 3
-                        xmD=mean(xCD,'omitnan'); ymD=mean(yCD,'omitnan');
-                        sxxD=sum((xCD-xmD).^2,'omitnan')/(nCD-1);
-                        syyD=sum((yCD-ymD).^2,'omitnan')/(nCD-1);
-                        sxyD=sum((xCD-xmD).*(yCD-ymD),'omitnan')/(nCD-1);
-                        for li=1:numel(lam_grid)
-                            lv = lam_grid(li);
-                            denom=2*sxyD;
-                            if abs(denom)<1e-10, sl=1; else
-                                sl=(syyD-lv*sxxD+sqrt((syyD-lv*sxxD)^2+4*lv*sxyD^2))/denom;
-                            end
-                            if isnan(sl)||isinf(sl)||abs(sl)<1e-4, sl=1; end
-                            ic=ymD-sl*xmD;
-                            yh=(yCD-ic)/sl;
-                            rmseD=sqrt(mean((yh-xCD).^2,'omitnan'));
-                            if rmseD < best_rmse_deming
-                                best_rmse_deming = rmseD;
-                                best_lam_deming = lv;
-                            end
-                        end
-                    end
-
-                    best_tau_h=0; best_w1_h=8; best_lam_h=1.0; best_rmse_h=inf;
-
-                    rawCDIValid = fullCDIVals(validCDIMask);
-                    rawPairedFit = zeros(numel(xABL_fit),1);
-                    for k=1:numel(xABL_fit)
-                        [~,bi]=min(abs(searchTimes-fitTimes(k)));
-                        rawPairedFit(k)=rawCDIValid(bi);
-                    end
-                    rd = rawPairedFit - xABL_fit;
-                    med_rd = median(rd,'omitnan');
-                    mad_rd = median(abs(rd-med_rd),'omitnan');
-                    if mad_rd>0
-                        globalMaskH = abs(rd-med_rd)<=(4.5*mad_rd);
-                    else
-                        globalMaskH = true(size(rd));
-                    end
-                    xCleanH_global = xABL_fit(globalMaskH);
 
                     raw_valid_h = fullCDIVals(validCDIMask);
                     raw_valid_h_win = raw_valid_h(winMaskCDIH);
-                    if numel(raw_valid_h_win)>2
-                        raw_rough = std(diff(raw_valid_h_win),'omitnan');
-                        if raw_rough==0||isnan(raw_rough), raw_rough=1; end
-                    else, raw_rough=1;
+                    if numel(raw_valid_h_win) > 2
+                        raw_rough = std(diff(raw_valid_h_win), 'omitnan');
+                        if raw_rough == 0 || isnan(raw_rough), raw_rough = 1.0; end
+                    else
+                        raw_rough = 1.0;
                     end
 
-                    for wi=1:nW1
-                        for ti=1:nTau
-                            fp_fit = fastPairedFit(:,ti,wi);   
-                            fp_clean = fp_fit(globalMaskH);
-                            nCH = numel(xCleanH_global);
-                            if nCH < 2, continue; end
-                            xmH=mean(xCleanH_global,'omitnan'); ymH=mean(fp_clean,'omitnan');
-                            sxxH=sum((xCleanH_global-xmH).^2,'omitnan')/(nCH-1);
-                            syyH=sum((fp_clean-ymH).^2,'omitnan')/(nCH-1);
-                            sxyH=sum((xCleanH_global-xmH).*(fp_clean-ymH),'omitnan')/(nCH-1);
-                            for li=1:numel(lam_grid)
-                                lv=lam_grid(li);
-                                denom=2*sxyH;
-                                if abs(denom)<1e-10, sl=1; else
-                                    sl=(syyH-lv*sxxH+sqrt((syyH-lv*sxxH)^2+4*lv*sxyH^2))/denom;
-                                end
-                                if isnan(sl)||isinf(sl)||abs(sl)<1e-4, sl=1; end
-                                ic=ymH-sl*xmH;
-                                yh=(fp_fit-ic)/sl;
-                                rmseH=sqrt(mean((yh(globalMaskH)-xCleanH_global).^2,'omitnan'));
-                                
-                                corr_rough = fastRoughnessWin(ti,wi) / abs(sl);
-                                if isnan(corr_rough), corr_rough = raw_rough; end
-                                roughness_ratio = corr_rough / raw_rough;
-                                pen = max(0, roughness_ratio - 1.0) * 0.3 * rmseH;
-                                
-                                if rmseH+pen < best_rmse_h
-                                    best_rmse_h=rmseH+pen;
-                                    best_tau_h=tau_grid(ti);
-                                    best_w1_h=w1_grid(wi);
-                                    best_lam_h=lv;
-                                end
-                            end
-                        end
-                    end
-
-                    ti_best = find(tau_grid==best_tau_h,1);
-                    wi_best = find(w1_grid==best_w1_h,1);
-                    if isempty(ti_best), ti_best=1; end
-                    if isempty(wi_best), wi_best=2; end
-                    cdi_fast_paired      = fastPaired(:,ti_best,wi_best);
-                    cdi_fast_paired_fit  = fastPairedFit(:,ti_best,wi_best);
-
-                    app.StatusLabel.Text = sprintf('Auto: running LOO-CV (Deming λ=%.2f, Hybrid τ=%.1f W1=%d λ=%.2f)...', ...
-                        best_lam_deming, best_tau_h, best_w1_h, best_lam_h); drawnow;
-
-                    % Leave-One-Out Cross Validation loop for 'Auto' Selection
-                    for ci = 1:6
-                        looErrors = nan(n,1);
+                    % =========================================================================
+                    % STRICT LEAVE-ONE-OUT CROSS-VALIDATION (Hyperparameter tuning strictly in-fold)
+                    % =========================================================================
+                    for ci = 1:7
+                        looErrors = nan(n, 1);
                         for i = 1:n
-                            % Split data: train on (N-1), test on the 1 left out
                             leaveIdx = [1:i-1, i+1:n];
-                            xTr=xABL_fit(leaveIdx); yTr=yCDI_fit(leaveIdx);
-                            yTe=yCDI_fit(i);         xTe=xABL_fit(i);
+                            xTr = xABL_fit(leaveIdx);
+                            yTr = yCDI_fit(leaveIdx);
+                            xTe = xABL_fit(i);
+                            yTe = yCDI_fit(i);
+
                             try
-                                % Apply MAD filter ONLY to training data (no data leakage)
-                                cMask=robustCleanMask(app,xTr,yTr);
-                                xTrC=xTr(cMask); yTrC=yTr(cMask);
+                                cMask = robustCleanMask(app, xTr, yTr);
+                                xTrC  = xTr(cMask); 
+                                yTrC  = yTr(cMask);
+
                                 switch ci
-                                    case 1 
-                                        b=mean(yTrC-xTrC,'omitnan');
-                                        pred=yTe-b;
-                                    case 2 
-                                        if numel(xTrC)>=2 && std(xTrC,'omitnan')>0
-                                            pp=polyfit(xTrC,yTrC,1);
-                                            if abs(pp(1))>1e-5, pred=(yTe-pp(2))/pp(1);
-                                            else, pred=yTe-(mean(yTrC)-mean(xTrC)); end
-                                        else, pred=NaN; end
-                                    case 3 
-                                        vp=xTrC>0&yTrC>0;
-                                        if any(vp)
-                                            ratio=mean(xTrC(vp)./yTrC(vp),'omitnan');
-                                            pred=yTe*ratio;
-                                        else, pred=NaN; end
-                                    case 4 
-                                        % Find best lam strictly on training data
-                                        best_lam_fold = lam_grid(1); best_rmse_fold = inf;
-                                        if numel(xTrC)>=3
-                                            xmD_f=mean(xTrC,'omitnan'); ymD_f=mean(yTrC,'omitnan');
-                                            sxxD_f=sum((xTrC-xmD_f).^2,'omitnan')/(numel(xTrC)-1);
-                                            syyD_f=sum((yTrC-ymD_f).^2,'omitnan')/(numel(xTrC)-1);
-                                            sxyD_f=sum((xTrC-xmD_f).*(yTrC-ymD_f),'omitnan')/(numel(xTrC)-1);
-                                            for li_f=1:numel(lam_grid)
-                                                lv_f = lam_grid(li_f); denom_f = 2*sxyD_f;
-                                                if abs(denom_f)<1e-10, sl_f=1; else
-                                                    sl_f=(syyD_f-lv_f*sxxD_f+sqrt((syyD_f-lv_f*sxxD_f)^2+4*lv_f*sxyD_f^2))/denom_f;
-                                                end
-                                                if isnan(sl_f)||isinf(sl_f)||abs(sl_f)<1e-4, sl_f=1; end
-                                                ic_f=ymD_f-sl_f*xmD_f;
-                                                yh_f=(yTrC-ic_f)/sl_f;
-                                                rmse_f=sqrt(mean((yh_f-xTrC).^2,'omitnan'));
-                                                if rmse_f < best_rmse_fold
-                                                    best_rmse_fold = rmse_f; best_lam_fold = lv_f;
-                                                end
+                                    case 1 % Bias Correction
+                                        b = mean(yTrC - xTrC, 'omitnan');
+                                        pred = yTe - b;
+
+                                    case 2 % OLS Regression
+                                        if numel(xTrC) >= 2 && std(xTrC, 'omitnan') > 0
+                                            pp = polyfit(xTrC, yTrC, 1);
+                                            if abs(pp(1)) > 1e-5
+                                                pred = (yTe - pp(2)) / pp(1);
+                                            else
+                                                pred = yTe - (mean(yTrC) - mean(xTrC));
                                             end
-                                        end
-                                        lv = best_lam_fold;
-                                        
-                                        if numel(xTrC)>=2 && std(xTrC,'omitnan')>0 && std(yTrC,'omitnan')>0
-                                            xmT=mean(xTrC,'omitnan'); ymT=mean(yTrC,'omitnan'); nT=numel(xTrC);
-                                            sxxT=sum((xTrC-xmT).^2,'omitnan')/(nT-1);
-                                            syyT=sum((yTrC-ymT).^2,'omitnan')/(nT-1);
-                                            sxyT=sum((xTrC-xmT).*(yTrC-ymT),'omitnan')/(nT-1);
-                                            denom=2*sxyT;
-                                            if abs(denom)>1e-10
-                                                slopeT=(syyT-lv*sxxT+sqrt((syyT-lv*sxxT)^2+4*lv*sxyT^2))/denom;
-                                                intT=ymT-slopeT*xmT;
-                                                if abs(slopeT)>1e-5, pred=(yTe-intT)/slopeT;
-                                                else, pred=yTe-(ymT-xmT); end
-                                            else, pred=yTe-(ymT-xmT); end
-                                        else, pred=NaN; end
-                                    case 5 
-                                        nT=numel(xTrC); slopesT=zeros(nT*(nT-1)/2,1); idxT=1;
-                                        for ii=1:nT-1
-                                            for jj=ii+1:nT
-                                                if xTrC(jj)~=xTrC(ii), slopesT(idxT)=(yTrC(jj)-yTrC(ii))/(xTrC(jj)-xTrC(ii));
-                                                else, slopesT(idxT)=NaN; end
-                                                idxT=idxT+1;
-                                            end
-                                        end
-                                        slopesT=slopesT(~isnan(slopesT));
-                                        if isempty(slopesT), pred=NaN;
                                         else
-                                            slopeT=median(slopesT,'omitnan');
-                                            intT=median(yTrC-slopeT.*xTrC,'omitnan');
-                                            if abs(slopeT)>1e-5, pred=(yTe-intT)/slopeT;
-                                            else, pred=yTe-(mean(yTrC)-mean(xTrC)); end
+                                            pred = NaN;
                                         end
-                                    case 6 
-                                        % --- NESTED HYPERPARAMETER OPTIMIZATION (No Data Leakage) ---
-                                        % Find best parameters strictly using the N-1 training data (xTr, yTr)
-                                        fold_best_tau = 0; fold_best_w1 = w1_grid(1); fold_best_lam = 1.0; fold_best_rmse = inf;
-                                        
-                                        % Re-calculate baseline roughness for the N-1 training set
-                                        raw_rough_tr = std(diff(yTr), 'omitnan');
-                                        if raw_rough_tr == 0 || isnan(raw_rough_tr), raw_rough_tr = 1; end
-                                        
-                                        % Grid search over the training data ONLY
-                                        for wi_f = 1:nW1
-                                            for ti_f = 1:nTau
-                                                fp_tr = fastPairedFit(leaveIdx, ti_f, wi_f); 
+
+                                    case 3 % Proportional Correction
+                                        vp = xTrC > 0 & yTrC > 0;
+                                        if any(vp)
+                                            ratio = mean(xTrC(vp) ./ yTrC(vp), 'omitnan');
+                                            pred = yTe * ratio;
+                                        else
+                                            pred = NaN;
+                                        end
+
+                                    case 4 % Standard Deming (Fixed lambda = 1.0)
+                                        [sl_d, ic_d] = fitWeightedDeming(app, xTrC, yTrC, 1.0);
+                                        pred = (yTe - ic_d) / sl_d;
+
+                                    case 5 % Linnet Weighted Deming (Tuned lambda strictly inside training fold)
+                                        best_lam_fold = 1.0;
+                                        best_rmse_wfold = inf;
+                                        if numel(xTrC) >= 3
+                                            for li = 1:numel(lam_grid)
+                                                lv = lam_grid(li);
+                                                [sl_w, ic_w] = fitWeightedDeming(app, xTrC, yTrC, lv);
+                                                yh_w = (yTrC - ic_w) / sl_w;
+                                                rmseW = sqrt(mean((yh_w - xTrC).^2, 'omitnan'));
+                                                if rmseW < best_rmse_wfold
+                                                    best_rmse_wfold = rmseW;
+                                                    best_lam_fold = lv;
+                                                end
+                                            end
+                                        end
+                                        [sl_wd, ic_wd] = fitWeightedDeming(app, xTrC, yTrC, best_lam_fold);
+                                        pred = (yTe - ic_wd) / sl_wd;
+
+                                    case 6 % Passing-Bablok (Simplified)
+                                        nT = numel(xTrC);
+                                        slopesT = zeros(nT * (nT - 1) / 2, 1);
+                                        idxT = 1;
+                                        for ii = 1:nT-1
+                                            for jj = ii+1:nT
+                                                if xTrC(jj) ~= xTrC(ii)
+                                                    slopesT(idxT) = (yTrC(jj) - yTrC(ii)) / (xTrC(jj) - xTrC(ii));
+                                                else
+                                                    slopesT(idxT) = NaN;
+                                                end
+                                                idxT = idxT + 1;
+                                            end
+                                        end
+                                        slopesT = slopesT(~isnan(slopesT));
+                                        if isempty(slopesT)
+                                            pred = NaN;
+                                        else
+                                            slopeT = median(slopesT, 'omitnan');
+                                            intT   = median(yTrC - slopeT .* xTrC, 'omitnan');
+                                            if abs(slopeT) > 1e-5
+                                                pred = (yTe - intT) / slopeT;
+                                            else
+                                                pred = yTe - (mean(yTrC) - mean(xTrC));
+                                            end
+                                        end
+
+                                    case 7 % Hybrid Method (Tuned tau, W1, lambda strictly inside training fold)
+                                        best_tau_fold = 0;
+                                        best_w1_fold  = 8;
+                                        best_lam_hfold = 1.0;
+                                        best_rmse_hfold = inf;
+
+                                        for wi = 1:nW1
+                                            for ti = 1:nTau
+                                                fp_tr = fastPairedFit(leaveIdx, ti, wi);
                                                 cMaskH_tr = robustCleanMask(app, xTr, fp_tr);
-                                                xCleanH_tr = xTr(cMaskH_tr); 
-                                                yCleanH_tr = fp_tr(cMaskH_tr); 
-                                                nCH = numel(xCleanH_tr);
-                                                
-                                                if nCH < 2, continue; end
-                                                
-                                                xmH = mean(xCleanH_tr, 'omitnan'); ymH = mean(yCleanH_tr, 'omitnan');
-                                                sxxH = sum((xCleanH_tr - xmH).^2, 'omitnan')/(nCH-1);
-                                                syyH = sum((yCleanH_tr - ymH).^2, 'omitnan')/(nCH-1);
-                                                sxyH = sum((xCleanH_tr - xmH).*(yCleanH_tr - ymH), 'omitnan')/(nCH-1);
-                                                
-                                                for li_f = 1:numel(lam_grid)
-                                                    lv_f = lam_grid(li_f);
-                                                    denom = 2*sxyH;
-                                                    if abs(denom) < 1e-10, sl = 1; else
-                                                        sl = (syyH - lv_f*sxxH + sqrt((syyH - lv_f*sxxH)^2 + 4*lv_f*sxyH^2))/denom;
-                                                    end
-                                                    if isnan(sl) || isinf(sl) || abs(sl) < 1e-4, sl = 1; end
-                                                    
-                                                    ic = ymH - sl*xmH;
-                                                    yh_tr = (fp_tr - ic)/sl;
-                                                    rmseH_tr = sqrt(mean((yh_tr(cMaskH_tr) - xCleanH_tr).^2, 'omitnan'));
-                                                    
-                                                    % Roughness penalty applied strictly on training fold
-                                                    corr_rough_tr = fastRoughnessWin(ti_f,wi_f) / abs(sl);
-                                                    if isnan(corr_rough_tr), corr_rough_tr = raw_rough_tr; end
-                                                    roughness_ratio = corr_rough_tr / raw_rough_tr;
-                                                    pen = max(0, roughness_ratio - 1.0) * 0.3 * rmseH_tr;
-                                                    
-                                                    if rmseH_tr + pen < fold_best_rmse
-                                                        fold_best_rmse = rmseH_tr + pen;
-                                                        fold_best_tau = tau_grid(ti_f);
-                                                        fold_best_w1 = w1_grid(wi_f);
-                                                        fold_best_lam = lv_f;
+                                                xTrH = xTr(cMaskH_tr);
+                                                yTrH = fp_tr(cMaskH_tr);
+                                                if numel(xTrH) < 2, continue; end
+
+                                                for li = 1:numel(lam_grid)
+                                                    lv = lam_grid(li);
+                                                    [sl_h, ic_h] = fitWeightedDeming(app, xTrH, yTrH, lv);
+                                                    yh_h = (yTrH - ic_h) / sl_h;
+                                                    rmseH = sqrt(mean((yh_h - xTrH).^2, 'omitnan'));
+
+                                                    corr_rough = fastRoughnessWin(ti, wi) / max(abs(sl_h), 1e-4);
+                                                    if isnan(corr_rough), corr_rough = raw_rough; end
+                                                    roughness_ratio = corr_rough / raw_rough;
+                                                    pen = max(0, roughness_ratio - 1.0) * 0.25 * rmseH;
+
+                                                    if rmseH + pen < best_rmse_hfold
+                                                        best_rmse_hfold = rmseH + pen;
+                                                        best_tau_fold   = tau_grid(ti);
+                                                        best_w1_fold    = w1_grid(wi);
+                                                        best_lam_hfold  = lv;
                                                     end
                                                 end
                                             end
                                         end
-                                        
-                                        % --- APPLY FOLD-OPTIMIZED PARAMS TO THE LEFT-OUT SAMPLE (i) ---
-                                        ti_fold = find(tau_grid == fold_best_tau, 1);
-                                        wi_fold = find(w1_grid == fold_best_w1, 1);
+
+                                        % Apply fold-selected hyperparameters to test sample i
+                                        ti_fold = find(tau_grid == best_tau_fold, 1);
+                                        wi_fold = find(w1_grid == best_w1_fold, 1);
                                         if isempty(ti_fold), ti_fold = 1; end
                                         if isempty(wi_fold), wi_fold = 2; end
-                                        
-                                        yFastTr_final = fastPairedFit(leaveIdx, ti_fold, wi_fold);
-                                        yFastTe_final = fastPairedFit(i, ti_fold, wi_fold);
-                                        
-                                        cMaskH_final = robustCleanMask(app, xTr, yFastTr_final);
-                                        xCleanH_final = xTr(cMaskH_final); 
-                                        yCleanH_final = yFastTr_final(cMaskH_final); 
-                                        nT = numel(xCleanH_final);
-                                        
-                                        if nT >= 2
-                                            xmT = mean(xCleanH_final, 'omitnan'); ymT = mean(yCleanH_final, 'omitnan');
-                                            sxxT = sum((xCleanH_final - xmT).^2, 'omitnan')/(nT-1);
-                                            syyT = sum((yCleanH_final - ymT).^2, 'omitnan')/(nT-1);
-                                            sxyT = sum((xCleanH_final - xmT).*(yCleanH_final - ymT), 'omitnan')/(nT-1);
-                                            denom = 2*sxyT;
-                                            if abs(denom) > 1e-10
-                                                slopeT = (syyT - fold_best_lam*sxxT + sqrt((syyT - fold_best_lam*sxxT)^2 + 4*fold_best_lam*sxyT^2))/denom;
-                                                intT = ymT - slopeT*xmT;
-                                                if abs(slopeT) > 1e-5, pred = (yFastTe_final - intT)/slopeT;
-                                                else, pred = yFastTe_final - (ymT - xmT); end
-                                            else, pred = yFastTe_final - (ymT - xmT); end
-                                        else, pred = NaN; end
+
+                                        yFastTr = fastPairedFit(leaveIdx, ti_fold, wi_fold);
+                                        yFastTe = fastPairedFit(i, ti_fold, wi_fold);
+                                        cMaskH_f = robustCleanMask(app, xTr, yFastTr);
+                                        [sl_hf, ic_hf] = fitWeightedDeming(app, xTr(cMaskH_f), yFastTr(cMaskH_f), best_lam_hfold);
+                                        pred = (yFastTe - ic_hf) / sl_hf;
                                 end
                                 looErrors(i) = pred - xTe;
                             catch
@@ -2358,142 +2227,203 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                         end
                     end
 
+                    % Model Selection: Best LOO-CV RMSE with <1% LoA Span Tiebreaker
                     if n < 7
-                        bestIdx=1; bestName=candidateNames{1}; smallNWarning=true;
+                        bestIdx = 1; 
+                        bestName = candidateNames{1}; 
+                        smallNWarning = true;
                     else
                         [sortedR, sortOrder] = sort(candidateRMSE);
-                        if numel(sortOrder)>=2 && sortedR(1)>0 && ...
-                                (sortedR(2)-sortedR(1))/sortedR(1) < 0.01
-                            tA2=sortOrder(1); tB2=sortOrder(2);
-                            if candidateLoASpan(tB2)<candidateLoASpan(tA2), bestIdx=tB2;
-                            else, bestIdx=tA2; end
-                        else, bestIdx=sortOrder(1); end
-                        bestName=candidateNames{bestIdx}; smallNWarning=false;
+                        if numel(sortOrder) >= 2 && sortedR(1) > 0 && ...
+                                (sortedR(2) - sortedR(1)) / sortedR(1) < 0.01
+                            tA2 = sortOrder(1); 
+                            tB2 = sortOrder(2);
+                            if candidateLoASpan(tB2) < candidateLoASpan(tA2)
+                                bestIdx = tB2;
+                            else
+                                bestIdx = tA2;
+                            end
+                        else
+                            bestIdx = sortOrder(1);
+                        end
+                        bestName = candidateNames{bestIdx}; 
+                        smallNWarning = false;
+                    end
+
+                    % Fit deployment parameters for the winning model across the full fit-window dataset
+                    cMaskFull = robustCleanMask(app, xABL_fit, yCDI_fit);
+                    xCleanFull = xABL_fit(cMaskFull);
+                    yCleanFull = yCDI_fit(cMaskFull);
+
+                    switch bestIdx
+                        case 1 % Bias
+                            bias = mean(yCleanFull - xCleanFull, 'omitnan');
+                            yCorrected = yCDI_fit - bias;
+                            yCorrected(~cMaskFull) = NaN;
+                            app.CorrectionModel.type = 'bias'; 
+                            app.CorrectionModel.bias = bias;
+                            app.CorrectionModel.formula = sprintf('Model: Raw_CDI = ABL %+.4f\nCorrected = Raw_CDI %+.4f\n(Fitted on %d/%d window pairs, %d robust [|diff - med| <= 4.5*MAD])', ...
+                                bias, -bias, numel(xABL_fit), numel(xABL), sum(cMaskFull));
+
+                        case 2 % OLS
+                            pp = polyfit(xCleanFull, yCleanFull, 1);
+                            if abs(pp(1)) < 1e-4, pp(1) = 1; pp(2) = mean(yCleanFull) - mean(xCleanFull); end
+                            yCorrected = (yCDI_fit - pp(2)) / pp(1);
+                            yCorrected(~cMaskFull) = NaN;
+                            app.CorrectionModel.type = 'ols_abl_x'; 
+                            app.CorrectionModel.slope = pp(1); 
+                            app.CorrectionModel.intercept = pp(2);
+                            app.CorrectionModel.formula = sprintf('Model: Raw_CDI = %.4f*ABL %+.4f\nCorrected = (Raw_CDI %+.4f) / %.4f\n(Fitted on %d/%d window pairs, %d robust [|diff - med| <= 4.5*MAD])', ...
+                                pp(1), pp(2), -pp(2), pp(1), numel(xABL_fit), numel(xABL), sum(cMaskFull));
+
+                        case 3 % Proportional
+                            ratio = mean(xCleanFull ./ yCleanFull, 'omitnan');
+                            yCorrected = yCDI_fit * ratio;
+                            yCorrected(~cMaskFull) = NaN;
+                            app.CorrectionModel.type = 'proportional'; 
+                            app.CorrectionModel.ratio = ratio;
+                            app.CorrectionModel.formula = sprintf('Ratio (ABL/CDI) = %.4f\nCorrected = Raw_CDI * %.4f\n(Fitted on %d/%d window pairs, %d robust [|diff - med| <= 4.5*MAD])', ...
+                                ratio, ratio, numel(xABL_fit), numel(xABL), sum(cMaskFull));
+
+                        case 4 % Deming (lambda=1.0)
+                            [slope, intercept] = fitWeightedDeming(app, xCleanFull, yCleanFull, 1.0);
+                            yCorrected = (yCDI_fit - intercept) / slope;
+                            yCorrected(~cMaskFull) = NaN;
+                            app.CorrectionModel.type = 'deming'; 
+                            app.CorrectionModel.slope = slope; 
+                            app.CorrectionModel.intercept = intercept; 
+                            app.CorrectionModel.lam = 1.0;
+                            app.DemingLambdaEditField.Value = 1.0;
+                            app.CorrectionModel.formula = sprintf('Model: Raw_CDI = %.4f*ABL %+.4f  [Deming λ=1.00]\nCorrected = (Raw_CDI %+.4f) / %.4f\n(Fitted on %d/%d window pairs, %d robust [|diff - med| <= 4.5*MAD])', ...
+                                slope, intercept, -intercept, slope, numel(xABL_fit), numel(xABL), sum(cMaskFull));
+
+                        case 5 % Weighted Deming (Full tuning for deployment)
+                            best_lam_deploy = 1.0;
+                            best_rmse_wdeploy = inf;
+                            for li = 1:numel(lam_grid)
+                                lv = lam_grid(li);
+                                [sl_w, ic_w] = fitWeightedDeming(app, xCleanFull, yCleanFull, lv);
+                                yh_w = (yCleanFull - ic_w) / sl_w;
+                                rmseW = sqrt(mean((yh_w - xCleanFull).^2, 'omitnan'));
+                                if rmseW < best_rmse_wdeploy
+                                    best_rmse_wdeploy = rmseW;
+                                    best_lam_deploy = lv;
+                                end
+                            end
+                            [slope, intercept] = fitWeightedDeming(app, xCleanFull, yCleanFull, best_lam_deploy);
+                            yCorrected = (yCDI_fit - intercept) / slope;
+                            yCorrected(~cMaskFull) = NaN;
+                            app.CorrectionModel.type = 'weighted_deming'; 
+                            app.CorrectionModel.slope = slope; 
+                            app.CorrectionModel.intercept = intercept; 
+                            app.CorrectionModel.lam = best_lam_deploy;
+                            app.DemingLambdaEditField.Value = best_lam_deploy;
+                            app.CorrectionModel.formula = sprintf('Model: Raw_CDI = %.4f*ABL %+.4f  [Linnet Weighted Deming λ=%.2f]\nCorrected = (Raw_CDI %+.4f) / %.4f\n(Fitted on %d/%d window pairs, %d robust [|diff - med| <= 4.5*MAD])', ...
+                                slope, intercept, best_lam_deploy, -intercept, slope, numel(xABL_fit), numel(xABL), sum(cMaskFull));
+
+                        case 6 % Passing-Bablok
+                            n2 = numel(xCleanFull);
+                            s2 = zeros(n2 * (n2 - 1) / 2, 1); 
+                            i2 = 1;
+                            for ii = 1:n2-1
+                                for jj = ii+1:n2
+                                    if xCleanFull(jj) ~= xCleanFull(ii)
+                                        s2(i2) = (yCleanFull(jj) - yCleanFull(ii)) / (xCleanFull(jj) - xCleanFull(ii));
+                                    else
+                                        s2(i2) = NaN; 
+                                    end
+                                    i2 = i2 + 1;
+                                end
+                            end
+                            s2 = s2(~isnan(s2));
+                            slope = median(s2, 'omitnan');
+                            if isnan(slope) || isinf(slope) || abs(slope) < 1e-4, slope = 1; end
+                            intercept = median(yCleanFull - slope .* xCleanFull, 'omitnan');
+                            if isnan(intercept), intercept = mean(yCleanFull) - mean(xCleanFull); end
+                            yCorrected = (yCDI_fit - intercept) / slope;
+                            yCorrected(~cMaskFull) = NaN;
+                            app.CorrectionModel.type = 'passing-bablok'; 
+                            app.CorrectionModel.slope = slope; 
+                            app.CorrectionModel.intercept = intercept;
+                            app.CorrectionModel.formula = sprintf('Model: Raw_CDI = %.4f*ABL %+.4f  [Simplified Passing-Bablok]\nCorrected = (Raw_CDI %+.4f) / %.4f\n(Fitted on %d/%d window pairs, %d robust [|diff - med| <= 4.5*MAD])', ...
+                                slope, intercept, -intercept, slope, numel(xABL_fit), numel(xABL), sum(cMaskFull));
+
+                        case 7 % Hybrid Method (Full tuning for deployment)
+                            best_tau_dep = 0; best_w1_dep = 8; best_lam_dep = 1.0; best_rmse_dep = inf;
+                            for wi = 1:nW1
+                                for ti = 1:nTau
+                                    fp_fit = fastPairedFit(:, ti, wi);
+                                    cMaskH = robustCleanMask(app, xABL_fit, fp_fit);
+                                    xCleanH = xABL_fit(cMaskH);
+                                    yCleanH = fp_fit(cMaskH);
+                                    if numel(xCleanH) < 2, continue; end
+                                    
+                                    for li = 1:numel(lam_grid)
+                                        lv = lam_grid(li);
+                                        [sl_h, ic_h] = fitWeightedDeming(app, xCleanH, yCleanH, lv);
+                                        yh_h = (yCleanH - ic_h) / sl_h;
+                                        rmseH = sqrt(mean((yh_h - xCleanH).^2, 'omitnan'));
+                                        corr_rough = fastRoughnessWin(ti, wi) / max(abs(sl_h), 1e-4);
+                                        if isnan(corr_rough), corr_rough = raw_rough; end
+                                        roughness_ratio = corr_rough / raw_rough;
+                                        pen = max(0, roughness_ratio - 1.0) * 0.25 * rmseH;
+                                        if rmseH + pen < best_rmse_dep
+                                            best_rmse_dep = rmseH + pen;
+                                            best_tau_dep  = tau_grid(ti);
+                                            best_w1_dep   = w1_grid(wi);
+                                            best_lam_dep  = lv;
+                                        end
+                                    end
+                                end
+                            end
+
+                            cdi_fast_fit = computeAsymmetricFastCDI(app, fullCDIVals, fullCDITime, best_w1_dep, best_tau_dep, best_tau_dep);
+                            searchVals   = cdi_fast_fit(validCDIMask);
+                            cdi_fast_paired = zeros(size(xABL));
+                            for k = 1:numel(xABL)
+                                [~, bi] = min(abs(searchTimes - pairedTimes(k)));
+                                cdi_fast_paired(k) = searchVals(bi);
+                            end
+                            cMaskH = robustCleanMask(app, xABL_fit, cdi_fast_paired(fitWinMask));
+                            xClean = xABL_fit(cMaskH); 
+                            yClean = cdi_fast_paired(fitWinMask); 
+                            yClean = yClean(cMaskH);
+
+                            [slope, intercept] = fitWeightedDeming(app, xClean, yClean, best_lam_dep);
+                            yCorrected = (cdi_fast_paired(fitWinMask) - intercept) / slope;
+                            yCorrected(~cMaskH) = NaN;
+
+                            app.CorrectionModel.type = 'hybrid';
+                            app.CorrectionModel.tau_rise = best_tau_dep; 
+                            app.CorrectionModel.tau_fall = best_tau_dep;
+                            app.CorrectionModel.lam = best_lam_dep; 
+                            app.CorrectionModel.slope = slope; 
+                            app.CorrectionModel.intercept = intercept;
+                            app.TauSpinner.Value = best_tau_dep; 
+                            app.TauFallSpinner.Value = best_tau_dep;
+                            app.SmoothW1Spinner.Value = best_w1_dep; 
+                            app.DemingLambdaEditField.Value = best_lam_dep;
+                            app.CorrectionModel.formula = sprintf('Step 1: CDI_s = movmean(CDI_raw, [%d 0])\nStep 2: dCDI/dt = movmean(diff(CDI_s)/dt, [%d 0])\nStep 3: CDI_fast = CDI_s + %.1f * (dCDI/dt)\nStep 4: CDI_fast = movmean(CDI_fast, [2 0])\nStep 5: CDI_corrected = (CDI_fast - %.4f) / %.4f  [Linnet λ=%.2f]\nHybrid filtering is causal: current output uses current and prior CDI samples only.\n(Fitted on %d/%d window pairs, %d robust [|diff - med| <= 4.5*MAD])', ...
+                                max(0, best_w1_dep-1), max(0, best_w1_dep-1), best_tau_dep, intercept, slope, best_lam_dep, numel(xABL_fit), numel(xABL), sum(cMaskH));
                     end
 
                     [sortedRMSE, rankOrder] = sort(candidateRMSE);
-                    rankText = cell(1,6);
-                    for ri=1:6
-                        marker='';
-                        if rankOrder(ri)==bestIdx, marker='  ◀ winner'; end
-                        extra='';
-                        if rankOrder(ri)==4, extra=sprintf(' [λ=%.2f]',best_lam_deming); end
-                        if rankOrder(ri)==6, extra=sprintf(' [τ=%.1f W1=%d λ=%.2f]',best_tau_h,best_w1_h,best_lam_h); end
-                        rankText{ri}=sprintf('  #%d  %-32s  RMSE=%.4f  LoA span=%.4f%s%s', ...
+                    rankText = cell(1, 7);
+                    for ri = 1:7
+                        marker = '';
+                        if rankOrder(ri) == bestIdx, marker = '  ◀ winner'; end
+                        rankText{ri} = sprintf('  #%d  %-35s  RMSE=%.4f  LoA span=%.4f%s', ...
                             ri, candidateNames{rankOrder(ri)}, sortedRMSE(ri), ...
-                            candidateLoASpan(rankOrder(ri)), extra, marker);
-                    end
-                    if smallNWarning
-                        rankText{end+1}='';
-                        rankText{end+1}=sprintf('  ⚠ N=%d (<6): LOO-CV unreliable, defaulted to Bias Correction',n);
-                    elseif numel(sortedRMSE)>=2 && sortedRMSE(1)>0 && ...
-                            (sortedRMSE(2)-sortedRMSE(1))/sortedRMSE(1) < 0.01
-                        rankText{end+1}='';
-                        rankText{end+1}='  ℹ Top-2 RMSE within 1%: tiebroken by narrower LoA span';
+                            candidateLoASpan(rankOrder(ri)), marker);
                     end
 
-                    switch bestIdx
-                        case 1
-                            cMask=robustCleanMask(app,xABL_fit,yCDI_fit);
-                            bias=mean(yCDI_fit(cMask)-xABL_fit(cMask),'omitnan');
-                            yCorrected=yCDI_fit-bias;
-                            yCorrected(~cMask) = NaN;
-                            app.CorrectionModel.type='bias'; app.CorrectionModel.bias=bias;
-                            app.CorrectionModel.formula=sprintf('Model: Raw_CDI = ABL %+.4f\nCorrected = Raw_CDI %+.4f\n(Fitted on %d/%d window pairs, %d robust)',bias,-bias,numel(xABL_fit),numel(xABL),sum(cMask));
-                        case 2
-                            cMask=robustCleanMask(app,xABL_fit,yCDI_fit);
-                            pp=polyfit(xABL_fit(cMask),yCDI_fit(cMask),1);
-                            if abs(pp(1))<1e-4, pp(1)=1; pp(2)=mean(yCDI_fit(cMask))-mean(xABL_fit(cMask)); end
-                            yCorrected=(yCDI_fit-pp(2))/pp(1);
-                            yCorrected(~cMask) = NaN;
-                            app.CorrectionModel.type='ols_abl_x'; app.CorrectionModel.slope=pp(1); app.CorrectionModel.intercept=pp(2);
-                            app.CorrectionModel.formula=sprintf('Model: Raw_CDI = %.4f*ABL %+.4f\nCorrected = (Raw_CDI %+.4f) / %.4f\n(Fitted on %d/%d window pairs, %d robust)',pp(1),pp(2),-pp(2),pp(1),numel(xABL_fit),numel(xABL),sum(cMask));
-                        case 3
-                            cMask=robustCleanMask(app,xABL_fit,yCDI_fit);
-                            ratio=mean(xABL_fit(cMask)./yCDI_fit(cMask),'omitnan');
-                            yCorrected=yCDI_fit*ratio;
-                            yCorrected(~cMask) = NaN;
-                            app.CorrectionModel.type='proportional'; app.CorrectionModel.ratio=ratio;
-                            app.CorrectionModel.formula=sprintf('Ratio (ABL/CDI) = %.4f\nCorrected = Raw_CDI * %.4f\n(Fitted on %d/%d window pairs, %d robust)',ratio,ratio,numel(xABL_fit),numel(xABL),sum(cMask));
-                        case 4 
-                            lv=best_lam_deming;
-                            cMask=robustCleanMask(app,xABL_fit,yCDI_fit);
-                            xC2=xABL_fit(cMask); yC2=yCDI_fit(cMask); n2=numel(xC2);
-                            xm2=mean(xC2,'omitnan'); ym2=mean(yC2,'omitnan');
-                            sxx2=sum((xC2-xm2).^2,'omitnan')/(n2-1);
-                            syy2=sum((yC2-ym2).^2,'omitnan')/(n2-1);
-                            sxy2=sum((xC2-xm2).*(yC2-ym2),'omitnan')/(n2-1);
-                            denom=2*sxy2;
-                            if abs(denom)<1e-10, slope=1;
-                            else, slope=(syy2-lv*sxx2+sqrt((syy2-lv*sxx2)^2+4*lv*sxy2^2))/denom; end
-                            if isnan(slope)||isinf(slope)||abs(slope)<1e-4, slope=1; intercept=ym2-xm2;
-                            else, intercept=ym2-slope*xm2; end
-                            yCorrected=(yCDI_fit-intercept)/slope;
-                            yCorrected(~cMask) = NaN;
-                            app.CorrectionModel.type='deming'; app.CorrectionModel.slope=slope;
-                            app.CorrectionModel.intercept=intercept; app.CorrectionModel.lam=lv;
-                            app.DemingLambdaEditField.Value=lv;
-                            app.CorrectionModel.formula=sprintf('Model: Raw_CDI = %.4f*ABL %+.4f  [lambda=%.2f auto]\nCorrected = (Raw_CDI %+.4f) / %.4f\n(Fitted on %d/%d window pairs, %d robust)',slope,intercept,lv,-intercept,slope,numel(xABL_fit),numel(xABL),sum(cMask));
-                        case 5
-                            cMask=robustCleanMask(app,xABL_fit,yCDI_fit);
-                            xC2=xABL_fit(cMask); yC2=yCDI_fit(cMask); n2=numel(xC2);
-                            s2=zeros(n2*(n2-1)/2,1); i2=1;
-                            for ii=1:n2-1
-                                for jj=ii+1:n2
-                                    if xC2(jj)~=xC2(ii), s2(i2)=(yC2(jj)-yC2(ii))/(xC2(jj)-xC2(ii));
-                                    else, s2(i2)=NaN; end
-                                    i2=i2+1;
-                                end
-                            end
-                            s2=s2(~isnan(s2));
-                            slope=median(s2,'omitnan');
-                            if isnan(slope)||isinf(slope)||abs(slope)<1e-4, slope=1; end
-                            intercept=median(yC2-slope.*xC2,'omitnan');
-                            if isnan(intercept), intercept=mean(yC2)-mean(xC2); end
-                            yCorrected=(yCDI_fit-intercept)/slope;
-                            yCorrected(~cMask) = NaN;
-                            app.CorrectionModel.type='passing-bablok'; app.CorrectionModel.slope=slope; app.CorrectionModel.intercept=intercept;
-                            app.CorrectionModel.formula=sprintf('Model: Raw_CDI = %.4f*ABL %+.4f\nCorrected = (Raw_CDI %+.4f) / %.4f\n(Fitted on %d/%d window pairs, %d robust)',slope,intercept,-intercept,slope,numel(xABL_fit),numel(xABL),sum(cMask));
-                        case 6 
-                            cMaskH=robustCleanMask(app,xABL_fit,cdi_fast_paired_fit);
-                            xClean=xABL_fit(cMaskH); yClean=cdi_fast_paired_fit(cMaskH); n2=numel(xClean);
-                            if n2>=2
-                                xm2=mean(xClean,'omitnan'); ym2=mean(yClean,'omitnan');
-                                sxx2=sum((xClean-xm2).^2,'omitnan')/(n2-1);
-                                syy2=sum((yClean-ym2).^2,'omitnan')/(n2-1);
-                                sxy2=sum((xClean-xm2).*(yClean-ym2),'omitnan')/(n2-1);
-                                lv=best_lam_h;
-                                if abs(2*sxy2)>1e-10
-                                    slope=(syy2-lv*sxx2+sqrt((syy2-lv*sxx2)^2+4*lv*sxy2^2))/(2*sxy2);
-                                else, slope=1; end
-                                if isnan(slope)||isinf(slope)||abs(slope)<1e-4, slope=1; end
-                                intercept=ym2-slope*xm2;
-                                if isnan(intercept), intercept=0; end
-                            else, slope=1; intercept=0; end
-                            yCorrected=(cdi_fast_paired(fitWinMask)-intercept)/slope;
-                            yCorrected(~cMaskH)=NaN;
-                            app.CorrectionModel.type='hybrid';
-                            app.CorrectionModel.tau=best_tau_h;
-                            app.CorrectionModel.lam=best_lam_h;
-                            app.CorrectionModel.slope=slope;
-                            app.CorrectionModel.intercept=intercept;
-                            app.TauSpinner.Value=best_tau_h;
-                            app.SmoothW1Spinner.Value=best_w1_h;
-                            app.DemingLambdaEditField.Value=best_lam_h;
-                            app.CorrectionModel.formula=sprintf('Step 1: CDI_s = movmean(CDI_raw, [%d 0])  [W1 auto]\nStep 2: dCDI/dt = movmean(diff(CDI_s)/dt, [%d 0])\nStep 3: CDI_fast = CDI_raw + %.1f * (dCDI/dt)  [tau auto]\nStep 4: CDI_fast = movmean(CDI_fast, [3 0])\nStep 5: CDI_corrected = (CDI_fast - %.4f) / %.4f  [lambda=%.2f auto]\n(Fitted on %d/%d window pairs, %d robust)',best_w1_h,best_w1_h,best_tau_h,intercept,slope,best_lam_h,numel(xABL_fit),numel(xABL),sum(cMaskH));
-                    end
+                    app.CorrectionModel.autoSelected  = true;
+                    app.CorrectionModel.autoWinner    = bestName;
+                    app.CorrectionModel.smallNWarning = smallNWarning;
+                    app.CorrectionModel.autoRankText  = rankText;
+                    app.CorrectionModel.autoRMSE      = candidateRMSE;
+                    app.CorrectionModel.autoCandidates= candidateNames;
 
-                    app.CorrectionModel.autoSelected    = true;
-                    app.CorrectionModel.autoWinner      = bestName;
-                    app.CorrectionModel.smallNWarning   = smallNWarning;
-                    app.CorrectionModel.autoRankText    = rankText;
-                    app.CorrectionModel.autoRMSE        = candidateRMSE;
-                    app.CorrectionModel.autoCandidates  = candidateNames;
-                    app.CorrectionModel.autoBestLamDeming = best_lam_deming;
-                    app.CorrectionModel.autoBestTauH    = best_tau_h;
-                    app.CorrectionModel.autoBestW1H     = best_w1_h;
-                    app.CorrectionModel.autoBestLamH    = best_lam_h;
-                    
                 otherwise
                     uialert(app.UIFigure, ['Unknown correction method selected: ', method], 'Method Error');
                     return;
@@ -2505,10 +2435,9 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             end
             
             yCorrected_display = yCorrected;
-            
             app.CorrectionModel.yCorrected = yCorrected_display;
             app.CorrectionModel.timeVals = pairedTimes(fitWinMask);
-            
+
             xABL_disp = xABL_fit;
             validFit = ~isnan(xABL_disp) & ~isnan(yCorrected_display) & ~isinf(yCorrected_display);
             if sum(validFit) >= 2
@@ -2527,17 +2456,21 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             diffNew  = yCorrected_display - xABL_disp;
             biasNew  = mean(diffNew, 'omitnan');
             sdNew    = std(diffNew,  'omitnan');
+            
+            % Compute BEFORE stats on the exact same valid (MAD-filtered) points
+            diffBefore_clean = yCDI_fit(validFit) - xABL_disp(validFit);
+            sdBefore_clean   = std(diffBefore_clean, 'omitnan');
+            biasBefore_clean = mean(diffBefore_clean, 'omitnan');
 
             app.ImprovedBiasLabel.Text = sprintf('After Correction: Bias=%.4f', biasNew);
-            app.ImprovedSDLabel.Text   = sprintf('SD=%.4f', sdNew);
+            app.ImprovedSDLabel.Text   = sprintf('SD=%.4f (on %d kept pairs)', sdNew, sum(validFit));
 
-            sdBefore  = app.Stats.sd;
-            loaBefore = app.Stats.loa_up - app.Stats.loa_lo;
+            loaBefore_clean = 3.92 * sdBefore_clean;
             loaAfter  = 3.92 * sdNew;
-            sdReduction  = 100 * (1 - sdNew    / max(sdBefore,  1e-10));
-            loaReduction = 100 * (1 - loaAfter / max(loaBefore, 1e-10));
+            sdReduction  = 100 * (1 - sdNew    / max(sdBefore_clean,  1e-10));
+            loaReduction = 100 * (1 - loaAfter / max(loaBefore_clean, 1e-10));
 
-            biasImproved = abs(biasNew) < abs(app.Stats.bias) - 1e-6;
+            biasImproved = abs(biasNew) < abs(biasBefore_clean) - 1e-6;
             sdImproved   = sdReduction > 5;
             sdWorsened   = sdReduction < -5;
 
@@ -2570,29 +2503,9 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                 origVals = app.CDI_Corrected_Table.(param);
                 switch app.CorrectionModel.type
                     case 'hybrid'
-                        smoothed = movmean(origVals, [app.SmoothW1Spinner.Value 0], 'omitnan');
-                        if app.CorrectionModel.tau == 0
-                            cdi_fast = smoothed;
-                            cdi_fast(isnan(cdi_fast)) = origVals(isnan(cdi_fast));
-                        else
-                            dt = minutes(diff(app.CDI_Corrected_Table.Time));
-                            dt(dt == 0) = 0.01;
-                            dy = diff(smoothed);
-                            if isempty(dy), deriv = zeros(size(origVals));
-                            else, deriv = movmean([0; dy ./ dt], [app.SmoothW1Spinner.Value 0], 'omitnan');
-                            end
-                            validDerivs = deriv(~isnan(deriv) & ~isinf(deriv));
-                            if ~isempty(validDerivs)
-                                derivLimit = prctile(abs(validDerivs), 95);
-                                if derivLimit==0||isnan(derivLimit), derivLimit=10; end
-                            else, derivLimit=10;
-                            end
-                            deriv = max(min(deriv, derivLimit), -derivLimit);
-                            cdi_fast = origVals + app.CorrectionModel.tau .* deriv;
-                            cdi_fast(isnan(cdi_fast)) = origVals(isnan(cdi_fast));
-                        end
-                        cdi_fast = movmean(cdi_fast, [3 0], 'omitnan');
-                        if abs(app.CorrectionModel.slope)>1e-10
+                        cdi_fast = computeAsymmetricFastCDI(app, origVals, app.CDI_Corrected_Table.Time, ...
+                            app.SmoothW1Spinner.Value, app.CorrectionModel.tau_rise, app.CorrectionModel.tau_fall);
+                        if abs(app.CorrectionModel.slope) > 1e-10
                             full_corr = (cdi_fast - app.CorrectionModel.intercept) / app.CorrectionModel.slope;
                         else
                             full_corr = cdi_fast - app.CorrectionModel.intercept;
@@ -2600,14 +2513,10 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                         app.CDI_Corrected_Table.(param) = full_corr;
                     case 'bias'
                         app.CDI_Corrected_Table.(param) = origVals - app.CorrectionModel.bias;
-                    case 'ols_abl_x'
+                    case {'ols_abl_x', 'deming', 'weighted_deming', 'passing-bablok'}
                         app.CDI_Corrected_Table.(param) = (origVals - app.CorrectionModel.intercept) / app.CorrectionModel.slope;
                     case 'proportional'
                         app.CDI_Corrected_Table.(param) = origVals * app.CorrectionModel.ratio;
-                    case 'deming'
-                        app.CDI_Corrected_Table.(param) = (origVals - app.CorrectionModel.intercept) / app.CorrectionModel.slope;
-                    case 'passing-bablok'
-                        app.CDI_Corrected_Table.(param) = (origVals - app.CorrectionModel.intercept) / app.CorrectionModel.slope;
                 end
                 
                 app.CorrectionModel.fullTime = app.CDI_Corrected_Table.Time;
@@ -2619,7 +2528,6 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             ShowCorrectedSwitchChanged(app, []);  
             
             app.KeepCorrectionSwitch.Enable = 'on';
-            
             app.CorrViewSwitch.Enable = 'on';
             app.CorrViewSwitch.Value = true;
             CorrViewSwitchChanged(app, []); 
@@ -2630,7 +2538,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             
             if isfield(app.CorrectionModel, 'autoSelected') && app.CorrectionModel.autoSelected
                 if isfield(app.CorrectionModel, 'smallNWarning') && app.CorrectionModel.smallNWarning
-                    app.CorrectionStatusLabel.Text = sprintf('⚠ N=%d (<6): LOO-CV unreliable, defaulted to Bias Correction', numel(xABL_fit));
+                    app.CorrectionStatusLabel.Text = sprintf('⚠ N=%d (<7): LOO-CV unreliable, defaulted to Bias Correction', numel(xABL_fit));
                     app.CorrectionStatusLabel.FontColor = [0.8 0 0];
                 else
                     app.CorrectionStatusLabel.Text = sprintf('Auto → %s (RMSE=%.4f)', ...
@@ -2685,6 +2593,12 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             yOrig = app.Stats.yCDI;
             yCorr = app.CorrectionModel.yCorrected;
             
+            % Ensure exact 1:1 pair comparison by removing MAD-filtered points from the baseline
+            validPairs = ~isnan(yCorr) & ~isnan(xA);
+            xA = xA(validPairs);
+            yOrig = yOrig(validPairs);
+            yCorr = yCorr(validPairs);
+            
             screenSize = get(0, 'ScreenSize');
             winW = min(1200, screenSize(3) - 100);
             winH = min(900, screenSize(4) - 100);
@@ -2695,7 +2609,6 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                            'Position', [winX winY winW winH], ...
                            'Color', [0.95 0.95 0.95]);
 
-            % --- File / Export / View menu bar (mirrors the standard FIGURE/FORMAT/TOOLS/LAYOUT toolstrip) ---
             mFile = uimenu(fig, 'Text', 'File');
             uimenu(mFile, 'Text', 'Save Figure As...   (Ctrl+S)', 'Accelerator', 'S', ...
                 'MenuSelectedFcn', @(~,~) ABL_CDI_Analyzer.saveCompareFigureAs(fig, param));
@@ -2767,7 +2680,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             
             ax3 = uiaxes(gl); ax3.Layout.Row = 2; ax3.Layout.Column = 1; ax3.Box = 'on';
             hold(ax3, 'on');
-            biasO = app.Stats.bias; sdO = app.Stats.sd;
+            biasO = mean(diffOrig, 'omitnan'); sdO = std(diffOrig, 'omitnan');
             scatter(ax3, meanOrig, diffOrig, 50, 'filled', 'MarkerFaceColor', [0 0.4470 0.7410]);
             plot(ax3, limsMean, [biasO biasO], 'b-', 'LineWidth', 1.5);
             plot(ax3, limsMean, [biasO+1.96*sdO biasO+1.96*sdO], 'r--', 'LineWidth', 1);
@@ -2806,14 +2719,21 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             switch mdl.type
                 case 'hybrid'
                     yCorr = mdl.yCorrected;
-                    latexStr{end+1} = '$$ \text{CDI}_{s} = \text{movmean}(\text{CDI}_{\text{raw}},\, W_1),\quad W_1=8 $$';
-                    latexStr{end+1} = '$$ \frac{d\text{CDI}}{dt} = \text{movmean}\!\left(\frac{\Delta \text{CDI}_s}{\Delta t},\, W_1\right) $$';
-                    latexStr{end+1} = '$$ \text{CDI}_{\text{fast}} = \text{CDI}_{\text{raw}} + \tau \cdot \frac{d\text{CDI}}{dt} $$';
-                    latexStr{end+1} = '$$ \text{CDI}_{\text{fast}} = \text{movmean}(\text{CDI}_{\text{fast}},\, W_2),\quad W_2=3 $$';
-                    latexStr{end+1} = '$$ \text{CDI}_{\text{corrected}} = \frac{\text{CDI}_{\text{fast}} - \beta_0}{\beta_1} $$';
+                    w_sm = max(0, app.SmoothW1Spinner.Value - 1);
+                    latexStr{end+1} = sprintf('$$ \\text{CDI}_{s} = \\text{movmean}(\\text{CDI}_{\\text{raw}},\\, %d) $$', w_sm);
+                    latexStr{end+1} = sprintf('$$ \\frac{d\\text{CDI}}{dt} = \\text{movmean}\\!\\left(\\frac{\\Delta \\text{CDI}_s}{\\Delta t},\\, %d\\right) $$', w_sm);
+                    latexStr{end+1} = '$$ \text{CDI}_{\text{fast}} = \text{CDI}_{s} + \tau_{\text{dir}} \cdot \frac{d\text{CDI}}{dt} $$';
+                    latexStr{end+1} = '$$ \text{CDI}_{\text{fast}} = \text{movmean}(\text{CDI}_{\text{fast}},\, 2) $$';
+                    latexStr{end+1} = '$$ \text{CDI}_{\text{corrected}} = \frac{\text{CDI}_{\text{fast}} - \beta_0}{\beta_1} \quad [\text{Weighted Deming}] $$';
                     latexStr{end+1} = '';
                     latexStr{end+1} = '% ----- SPECIFIC APPLICATION EQUATION -----';
-                    latexStr{end+1} = sprintf('$$ \\tau = %.1f \\text{ min}, \\quad \\beta_0 = %.4f, \\quad \\beta_1 = %.4f $$', mdl.tau, mdl.intercept, mdl.slope);
+                    latexStr{end+1} = sprintf('$$ \\tau_{\\text{rise}} = %.1f \\text{ min}, \\quad \\tau_{\\text{fall}} = %.1f \\text{ min}, \\quad \\beta_0 = %.4f, \\quad \\beta_1 = %.4f, \\quad \\lambda = %.2f $$', mdl.tau_rise, mdl.tau_fall, mdl.intercept, mdl.slope, mdl.lam);
+                case 'weighted_deming'
+                    yCorr = (yC - mdl.intercept) / mdl.slope;
+                    latexStr{end+1} = '$$ \text{CDI}_{\text{corrected}} = \frac{\text{CDI}_{\text{raw}} - \beta_0}{\beta_1} \quad [\text{Linnet Weighted Deming: } w_i = 1/\hat{u}_i^2] $$';
+                    latexStr{end+1} = '';
+                    latexStr{end+1} = '% ----- SPECIFIC APPLICATION EQUATION -----';
+                    latexStr{end+1} = sprintf('$$ \\text{CDI}_{\\text{corrected}} = \\frac{\\text{CDI}_{\\text{raw}} %+.4f}{%.4f}, \\quad \\lambda = %.2f $$', -mdl.intercept, mdl.slope, mdl.lam);
                 case 'bias'
                     yCorr = yC - mdl.bias;
                     latexStr{end+1} = '$$ \text{CDI}_{\text{corrected}} = \text{CDI}_{\text{raw}} - \text{Bias} $$';
@@ -2829,11 +2749,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                     latexStr{end+1} = '$$ \text{CDI}_{\text{corrected}} = \frac{\text{CDI}_{\text{raw}} - \beta_0}{\beta_1} $$';
                     latexStr{end+1} = '';
                     latexStr{end+1} = '% ----- SPECIFIC APPLICATION EQUATION -----';
-                    if mdl.intercept < 0
-                        latexStr{end+1} = sprintf('$$ \\text{CDI}_{\\text{corrected}} = \\frac{\\text{CDI}_{\\text{raw}} + %.4f}{%.4f} $$', abs(mdl.intercept), mdl.slope);
-                    else
-                        latexStr{end+1} = sprintf('$$ \\text{CDI}_{\\text{corrected}} = \\frac{\\text{CDI}_{\\text{raw}} - %.4f}{%.4f} $$', mdl.intercept, mdl.slope);
-                    end
+                    latexStr{end+1} = sprintf('$$ \\text{CDI}_{\\text{corrected}} = \\frac{\\text{CDI}_{\\text{raw}} %+.4f}{%.4f} $$', -mdl.intercept, mdl.slope);
                 case 'proportional'
                     yCorr = yC * mdl.ratio;
                     latexStr{end+1} = '$$ \text{CDI}_{\text{corrected}} = \text{CDI}_{\text{raw}} \times \text{Ratio} $$';
@@ -2845,60 +2761,54 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                     latexStr{end+1} = '$$ \text{CDI}_{\text{corrected}} = \frac{\text{CDI}_{\text{raw}} - \beta_0}{\beta_1} $$';
                     latexStr{end+1} = '';
                     latexStr{end+1} = '% ----- SPECIFIC APPLICATION EQUATION -----';
-                    if mdl.intercept < 0
-                        latexStr{end+1} = sprintf('$$ \\text{CDI}_{\\text{corrected}} = \\frac{\\text{CDI}_{\\text{raw}} + %.4f}{%.4f} $$', abs(mdl.intercept), mdl.slope);
-                    else
-                        latexStr{end+1} = sprintf('$$ \\text{CDI}_{\\text{corrected}} = \\frac{\\text{CDI}_{\\text{raw}} - %.4f}{%.4f} $$', mdl.intercept, mdl.slope);
-                    end
+                    latexStr{end+1} = sprintf('$$ \\text{CDI}_{\\text{corrected}} = \\frac{\\text{CDI}_{\\text{raw}} %+.4f}{%.4f}, \\quad \\lambda = %.2f $$', -mdl.intercept, mdl.slope, mdl.lam);
                 case 'passing-bablok'
                     yCorr = (yC - mdl.intercept) / mdl.slope;
                     latexStr{end+1} = '$$ \text{CDI}_{\text{corrected}} = \frac{\text{CDI}_{\text{raw}} - \beta_0}{\beta_1} $$';
                     latexStr{end+1} = '';
                     latexStr{end+1} = '% ----- SPECIFIC APPLICATION EQUATION -----';
-                    if mdl.intercept < 0
-                        latexStr{end+1} = sprintf('$$ \\text{CDI}_{\\text{corrected}} = \\frac{\\text{CDI}_{\\text{raw}} + %.4f}{%.4f} $$', abs(mdl.intercept), mdl.slope);
-                    else
-                        latexStr{end+1} = sprintf('$$ \\text{CDI}_{\\text{corrected}} = \\frac{\\text{CDI}_{\\text{raw}} - %.4f}{%.4f} $$', mdl.intercept, mdl.slope);
-                    end
+                    latexStr{end+1} = sprintf('$$ \\text{CDI}_{\\text{corrected}} = \\frac{\\text{CDI}_{\\text{raw}} %+.4f}{%.4f} $$', -mdl.intercept, mdl.slope);
             end
 
-
-            
-            dBefore = yC - xA;
-            dAfter  = yCorr - xA;
+            % Mask arrays to compare only pairs surviving the MAD filter
+            validPairs = ~isnan(yCorr) & ~isnan(xA);
+            dBefore = yC(validPairs) - xA(validPairs);
+            dAfter  = yCorr(validPairs) - xA(validPairs);
+            nBeforeMAD = numel(xA);
+            nAfterMAD  = sum(validPairs);
             
             mName = mdl.type; mName(1) = upper(mName(1));
             mName = strrep(mName, '_', ' ');
-            if isAuto, mName = [mName '  (auto-selected)']; end
+            if isAuto, mName = [mName ' (auto-selected)']; end
             
             howTo = '';
             switch mdl.type
                 case 'hybrid'
                     w1_val = app.SmoothW1Spinner.Value;
-                    howTo = sprintf('THE CONCEPT:\nThe Hybrid method addresses the fundamental timing mismatch between intermittent ABL samples and continuous CDI monitoring.\n\nSTEP 1  -  PRE-SMOOTHING (W1=%d, causal):\nA trailing moving average (window=%d past points) smooths the raw CDI signal before any derivative is computed.\nThis removes high-frequency sensor noise that would otherwise be amplified by differentiation.\n   CDI_s = movmean(CDI_raw, [W1 0])\n\nSTEP 2  -  DERIVATIVE (Rate of Change):\nThe rate of change dCDI/dt is computed from the smoothed signal and then smoothed again (W1=%d).\nThis derivative is scaled by tau (tau = %.1f min) and added to the raw CDI value:\n   CDI_fast = CDI_raw + tau x (dCDI_s/dt)\nNote: A Physiological Speed Limit caps extreme derivatives at the 95th percentile.\n\nSTEP 3  -  POST-SMOOTHING (W2=3, causal):\nA short trailing average (window=3) is applied to CDI_fast before Deming fitting.\nThis further suppresses residual noise in the corrected output.\n   CDI_fast = movmean(CDI_fast, [3 0])\n\nSTEP 4  -  DEMING REGRESSION (Systematic Offset):\nDeming regression (lambda = %.1f) is applied between ABL measurements and the smoothed fast CDI signal.\nA robust MAD filter ignores extreme outliers during this calculation.\n   CDI_corrected = (CDI_fast - %.4f) / %.4f\n\nAPPLICATION TO NEW DATA (live use, no ABL needed):\n1. Maintain a rolling buffer of the last %d CDI readings\n2. Compute: CDI_s = mean of buffer\n3. Compute: dCDI/dt from smoothed buffer, cap at speed limit\n4. CDI_fast = CDI_raw + %.1f x (dCDI/dt)\n5. Apply trailing mean of last 3 CDI_fast values\n6. CDI_corrected = (CDI_fast - %.4f) / %.4f', w1_val, w1_val, w1_val, mdl.tau, mdl.lam, mdl.intercept, mdl.slope, w1_val, mdl.tau, mdl.intercept, mdl.slope);
+                    w_sm = max(0, w1_val - 1);
+                    howTo = sprintf('THE CONCEPT:\nDynamic response filtering + Linnet Weighted Deming regression.\nHybrid filtering is causal: current output uses current and prior CDI samples only.\n\nSTEP 1 - PRE-SMOOTHING (W1-1=%d):\nCDI_s = movmean(CDI_raw, [%d 0])\n\nSTEP 2 - DERIVATIVE LEAD:\nCDI_fast = CDI_s + tau * (dCDI_s/dt)\n\nSTEP 3 - LINNET WEIGHTED DEMING:\nFitted with lambda=%.2f using 1/u^2 variance weighting.\nCDI_corrected = (CDI_fast - %.4f) / %.4f', w_sm, w_sm, mdl.lam, mdl.intercept, mdl.slope);
+                case 'weighted_deming'
+                    howTo = sprintf('THE ALGEBRA:\nModel: Raw_CDI = (%.4f * ABL) %+.4f\nCorrected = (Raw_CDI %+.4f) / %.4f\n\nHOW IT WAS CALCULATED:\n- Linnet Weighted Deming Regression.\n- Weights w_i = 1 / u_hat_i^2 account for proportional error variance.\n- Lambda = %.2f variance ratio.', mdl.slope, mdl.intercept, -mdl.intercept, mdl.slope, mdl.lam);
                 case 'bias'
                     if mdl.bias > 0
-                        howTo = sprintf('THE ALGEBRA:\nModel: Raw_CDI = ABL + %.4f\nCorrected = Raw_CDI - %.4f\n\nHOW IT WAS CALCULATED:\n- Bias: Mean difference of all robust paired CDI-ABL points (after MAD outlier rejection).\n- Slope: Assumed exactly 1.0000.\n\nAPPLICATION TO NEW DATA:\n1. Subtract %.4f from every CDI %s reading.\n\nWHY USE THIS?\nSimple constant offset shift. Robust MAD filter ensures outlier draws do not bias the estimate.', mdl.bias, mdl.bias, mdl.bias, param);
+                        howTo = sprintf('THE ALGEBRA:\nModel: Raw_CDI = ABL + %.4f\nCorrected = Raw_CDI - %.4f\n\nHOW IT WAS CALCULATED:\n- Constant offset shift based on robust median difference.', mdl.bias, mdl.bias);
                     else
-                        howTo = sprintf('THE ALGEBRA:\nModel: Raw_CDI = ABL - %.4f\nCorrected = Raw_CDI + %.4f\n\nHOW IT WAS CALCULATED:\n- Bias: Mean difference of all robust paired CDI-ABL points (after MAD outlier rejection).\n- Slope: Assumed exactly 1.0000.\n\nAPPLICATION TO NEW DATA:\n1. Add %.4f to every CDI %s reading.\n\nWHY USE THIS?\nSimple constant offset shift. Robust MAD filter ensures outlier draws do not bias the estimate.', abs(mdl.bias), abs(mdl.bias), abs(mdl.bias), param);
+                        howTo = sprintf('THE ALGEBRA:\nModel: Raw_CDI = ABL - %.4f\nCorrected = Raw_CDI + %.4f\n\nHOW IT WAS CALCULATED:\n- Constant offset shift based on robust median difference.', abs(mdl.bias), abs(mdl.bias));
                     end
                 case 'ols_abl_x'
-                    howTo = sprintf('THE ALGEBRA:\nModel: Raw_CDI = (%.4f * ABL) %+.4f\nCorrected = (Raw_CDI %+.4f) / %.4f\n\nHOW IT WAS CALCULATED:\n- OLS fitted on robust paired points (MAD outlier rejection applied before fitting).\n\nAPPLICATION TO NEW DATA:\n1. Subtract %.4f (intercept)\n2. Divide by %.4f (slope)', mdl.slope, mdl.intercept, -mdl.intercept, mdl.slope, mdl.intercept, mdl.slope);
+                    howTo = sprintf('THE ALGEBRA:\nModel: Raw_CDI = (%.4f * ABL) %+.4f\nCorrected = (Raw_CDI %+.4f) / %.4f', mdl.slope, mdl.intercept, -mdl.intercept, mdl.slope);
                 case 'proportional'
-                    howTo = sprintf('THE ALGEBRA:\nRatio = Mean(ABL / Raw_CDI) = %.4f  (on robust pairs)\nCorrected = Raw_CDI * %.4f\n\nAPPLICATION TO NEW DATA:\n1. Multiply every CDI %s reading by %.4f', mdl.ratio, mdl.ratio, param, mdl.ratio);
+                    howTo = sprintf('THE ALGEBRA:\nRatio = Mean(ABL / Raw_CDI) = %.4f\nCorrected = Raw_CDI * %.4f', mdl.ratio, mdl.ratio);
                 case 'deming'
-                    howTo = sprintf('THE ALGEBRA:\nModel: Raw_CDI = (%.4f * ABL) %+.4f\nCorrected = (Raw_CDI %+.4f) / %.4f\n\nHOW IT WAS CALCULATED:\n- Deming Regression fitted on robust paired points (MAD outlier rejection applied before fitting).\n- Lambda (lambda) = %.2f accounts for measurement error in both devices.\n\nAPPLICATION TO NEW DATA:\n1. Subtract %.4f (intercept)\n2. Divide by %.4f (slope)', mdl.slope, mdl.intercept, -mdl.intercept, mdl.slope, mdl.lam, mdl.intercept, mdl.slope);
+                    howTo = sprintf('THE ALGEBRA:\nModel: Raw_CDI = (%.4f * ABL) %+.4f  [Deming λ=%.2f]\nCorrected = (Raw_CDI %+.4f) / %.4f', mdl.slope, mdl.intercept, mdl.lam, -mdl.intercept, mdl.slope);
                 case 'passing-bablok'
-                    howTo = sprintf('THE ALGEBRA:\nModel: Raw_CDI = (%.4f * ABL) %+.4f\nCorrected = (Raw_CDI %+.4f) / %.4f\n\nHOW IT WAS CALCULATED:\n- Passing-Bablok slope = median of all pairwise slopes (on robust pairs after MAD rejection).\n- Non-parametric, robust against extreme outliers.\n\nAPPLICATION TO NEW DATA:\n1. Subtract %.4f (intercept)\n2. Divide by %.4f (slope)', mdl.slope, mdl.intercept, -mdl.intercept, mdl.slope, mdl.intercept, mdl.slope);
+                    howTo = sprintf('THE ALGEBRA:\nModel: Raw_CDI = (%.4f * ABL) %+.4f  [Passing-Bablok]\nCorrected = (Raw_CDI %+.4f) / %.4f', mdl.slope, mdl.intercept, -mdl.intercept, mdl.slope);
             end
             
             screenSize = get(0, 'ScreenSize');
             winW = min(950, screenSize(3) - 100);
-            if isAuto
-                winH = min(900, screenSize(4) - 50);
-            else
-                winH = min(800, screenSize(4) - 50);
-            end
+            if isAuto, winH = min(900, screenSize(4) - 50);
+            else, winH = min(800, screenSize(4) - 50); end
             winX = max(50, round((screenSize(3) - winW) / 2));
             winY = max(50, round((screenSize(4) - winH) / 2));
             
@@ -2971,8 +2881,6 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             sBox.Editable = 'off';
             sBox.BackgroundColor = [1.0 0.98 0.94];
             
-            gateStr = '';
-            
             statsTextLines = {
                 sprintf('                BEFORE         AFTER')
                 sprintf('Bias:        %+9.4f     %+9.4f', mean(dBefore, 'omitnan'), mean(dAfter, 'omitnan'))
@@ -2984,7 +2892,9 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                 ''
                 sprintf('Bias reduction:  %.1f%%', 100*(1 - abs(mean(dAfter,'omitnan'))/max(abs(mean(dBefore,'omitnan')),1e-10)))
                 sprintf('SD change:       %+.1f%%', 100*(std(dAfter,'omitnan')/max(std(dBefore,'omitnan'),1e-10) - 1))
-                gateStr
+                ''
+                sprintf('MAD Filter: |diff - median| > 4.5*MAD')
+                sprintf('Excluded from stats. Kept %d / %d pairs.', nAfterMAD, nBeforeMAD)
             };
             sBox.Value = statsTextLines;
             
@@ -3009,16 +2919,12 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             biasAfter = abs(mean(dAfter, 'omitnan'));
             sdAfter = std(dAfter, 'omitnan');
             if biasAfter < 0.5 && sdAfter < 2
-                interpLines{end+1} = 'Bias + SD improved  -  residual bias near zero, tight agreement. (Software-defined descriptive label, not a clinical acceptance criterion.)';
+                interpLines{end+1} = 'Bias + SD improved - residual bias near zero, tight agreement.';
             elseif biasAfter < 1.0
-                interpLines{end+1} = 'Bias reduced, scatter remains  -  bias reduced but some scatter remains.';
+                interpLines{end+1} = 'Bias reduced, scatter remains.';
             else
-                interpLines{end+1} = 'Limited improvement  -  consider if systematic drift or outliers are present.';
+                interpLines{end+1} = 'Limited improvement - evaluate non-linearities or extreme sensor drift.';
             end
-            if std(dAfter,'omitnan') > std(dBefore,'omitnan') * 0.95
-                interpLines{end+1} = 'Note: SD did not improve  -  the error is mostly random, not systematic.';
-            end
-
             
             iBox = uilabel(ig);
             iBox.Layout.Row = 1;
@@ -3027,7 +2933,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             iBox.WordWrap = 'on';
             
             if isAuto
-                autoPanel = uipanel(mg, 'Title', 'Auto-Selection Report (LOO Cross-Validation)', ...
+                autoPanel = uipanel(mg, 'Title', 'Auto-Selection Report (7-Model LOO Cross-Validation)', ...
                     'FontWeight', 'bold', 'FontSize', 11, ...
                     'BackgroundColor', [0.93 0.96 1.0]);
                 autoPanel.Layout.Row = 4; autoPanel.Layout.Column = [1 2];
@@ -3036,7 +2942,8 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                 ag.Padding = [6 4 6 4];
                 
                 autoLines = {};
-                autoLines{end+1} = '   Primary criterion: RMSE   |   Tiebreaker: LoA span   |   All methods: MAD-robust fitting';
+                autoLines{end+1} = '   Primary criterion: Fold-wise LOO-CV RMSE (parameters tuned strictly inside folds)';
+                autoLines{end+1} = '   Final parameters refitted on the complete selected fit-window after ranking.';
                 autoLines{end+1} = '';
                 for ri = 1:numel(mdl.autoRankText)
                     autoLines{end+1} = mdl.autoRankText{ri}; 
@@ -3086,29 +2993,31 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
         end
 
         function ShowCorrectedSwitchChanged(app, ~)
-            if app.ShowCorrectedSwitch.Value
-                if isfield(app.CorrectionModel, 'fullY') && isfield(app.CorrectionModel, 'fullTime')
-                    corrLabel = app.CorrectionMethodDropDown.Value;
-                    if isfield(app.CorrectionModel, 'autoSelected') && app.CorrectionModel.autoSelected
-                        corrLabel = ['Auto: ' app.CorrectionModel.autoWinner];
-                    end
-                    corrLabel = ['CDI corrected (' corrLabel ')'];
-                    hold(app.TimeAxes, 'on');
-                    app.CorrectedTrendLine = plot(app.TimeAxes, ...
-                        app.CorrectionModel.fullTime, app.CorrectionModel.fullY, ...
-                        '-', 'DisplayName', corrLabel, ...
-                        'LineWidth', 1.5, ...
-                        'Color', [0.2 0.7 0.2]);
-                    
-                    legend(app.TimeAxes, 'Location', 'best');
-                    hold(app.TimeAxes, 'off');
+            if ~isempty(app.CorrectedTrendLine) && isvalid(app.CorrectedTrendLine)
+                delete(app.CorrectedTrendLine);
+                app.CorrectedTrendLine = [];
+            end
+
+            if app.ShowCorrectedSwitch.Value && isfield(app.CorrectionModel, 'fullY') && isfield(app.CorrectionModel, 'fullTime')
+                hold(app.TimeAxes, 'on');
+                t = app.CorrectionModel.fullTime;
+                y = app.CorrectionModel.fullY;
+
+                corrLabel = app.CorrectionMethodDropDown.Value;
+                if isfield(app.CorrectionModel, 'autoSelected') && app.CorrectionModel.autoSelected
+                    corrLabel = ['Auto: ' app.CorrectionModel.autoWinner];
                 end
-            else
-                if ~isempty(app.CorrectedTrendLine) && isvalid(app.CorrectedTrendLine)
-                    delete(app.CorrectedTrendLine);
-                    app.CorrectedTrendLine = [];
-                    legend(app.TimeAxes, 'Location', 'best');
+                corrLabel = ['CDI corrected (' corrLabel ')'];
+                if app.FitWindowCheckBox.Value
+                    corrLabel = [corrLabel ' [window coeffs applied to full recording]'];
                 end
+
+                app.CorrectedTrendLine = plot(app.TimeAxes, t, y, ...
+                    '-', 'DisplayName', corrLabel, ...
+                    'LineWidth', 1.6, 'Color', [0.15 0.65 0.15]);
+                
+                legend(app.TimeAxes, 'Location', 'best');
+                hold(app.TimeAxes, 'off');
             end
         end
 
@@ -3181,39 +3090,39 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
         % --- UI INITIALIZATION ---
         function createComponents(app)
             app.UIFigure = uifigure('Visible', 'off');
-            app.UIFigure.Position = [100 100 1400 800];
+            app.UIFigure.Position = [100 100 1440 850];
             app.UIFigure.Name = 'ABL-CDI Analyzer';
             app.UIFigure.Color = [0.95 0.95 0.95];
 
             app.GridLayout = uigridlayout(app.UIFigure, [1 2]);
-            app.GridLayout.ColumnWidth = {280, '1x'};
+            app.GridLayout.ColumnWidth = {310, '1x'};
             app.GridLayout.RowHeight = {'1x'};
 
             app.LeftPanel = uipanel(app.GridLayout);
             app.LeftPanel.Layout.Row = 1;
             app.LeftPanel.Layout.Column = 1;
-            app.LeftPanel.Title = 'Controls';
+            app.LeftPanel.Title = 'Controls & Calibration';
             app.LeftPanel.FontWeight = 'bold';
             app.LeftPanel.Scrollable = 'on';
             app.LeftPanel.AutoResizeChildren = 'off';  
 
-            app.LeftGrid = uigridlayout(app.LeftPanel, [19 1]);
+            app.LeftGrid = uigridlayout(app.LeftPanel, [22 1]);
             app.LeftGrid.ColumnWidth = {'1x'};
-            app.LeftGrid.RowHeight = repmat({'fit'}, 1, 19);
+            app.LeftGrid.RowHeight = repmat({'fit'}, 1, 22);
             app.LeftGrid.Padding = [10 10 10 10];
             app.LeftGrid.RowSpacing = 6;
             app.LeftGrid.Scrollable = 'on';
 
             app.LoadABLButton = uibutton(app.LeftGrid, 'push');
             app.LoadABLButton.Layout.Row = 1;
-            app.LoadABLButton.Text = '1️⃣ Load ABL Data';
-            app.LoadABLButton.FontSize = 12;
+            app.LoadABLButton.Text = '1️⃣ Load ABL Reference Data';
+            app.LoadABLButton.FontSize = 11;
             app.LoadABLButton.ButtonPushedFcn = createCallbackFcn(app, @LoadABLButtonPushed, true);
 
             app.LoadCDIButton = uibutton(app.LeftGrid, 'push');
             app.LoadCDIButton.Layout.Row = 2;
-            app.LoadCDIButton.Text = '2️⃣ Load CDI Data';
-            app.LoadCDIButton.FontSize = 12;
+            app.LoadCDIButton.Text = '2️⃣ Load CDI Continuous Log';
+            app.LoadCDIButton.FontSize = 11;
             app.LoadCDIButton.ButtonPushedFcn = createCallbackFcn(app, @LoadCDIButtonPushed, true);
 
             app.PatientIDLabel = uilabel(app.LeftGrid);
@@ -3231,7 +3140,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
 
             app.ParamLabel = uilabel(app.LeftGrid);
             app.ParamLabel.Layout.Row = 5;
-            app.ParamLabel.Text = 'Select Parameter:';
+            app.ParamLabel.Text = 'Select Analyte Parameter:';
             app.ParamLabel.FontWeight = 'bold';
             app.ParamLabel.FontSize = 10;
 
@@ -3242,7 +3151,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
 
             app.TimeToleranceLabel = uilabel(app.LeftGrid);
             app.TimeToleranceLabel.Layout.Row = 7;
-            app.TimeToleranceLabel.Text = 'Time Tolerance (min):';
+            app.TimeToleranceLabel.Text = 'Matching Tolerance (min):';
             app.TimeToleranceLabel.FontWeight = 'bold';
             app.TimeToleranceLabel.FontSize = 10;
 
@@ -3255,7 +3164,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
 
             app.TimeShiftLabel = uilabel(app.LeftGrid);
             app.TimeShiftLabel.Layout.Row = 9;
-            app.TimeShiftLabel.Text = 'CDI Time Shift (min):';
+            app.TimeShiftLabel.Text = 'CDI Timeline Shift (min):';
             app.TimeShiftLabel.FontWeight = 'bold';
             app.TimeShiftLabel.FontSize = 10;
 
@@ -3268,7 +3177,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             
             app.AutoShiftButton = uibutton(app.LeftGrid, 'push');
             app.AutoShiftButton.Layout.Row = 11;
-            app.AutoShiftButton.Text = '⏱️ Auto-Detect Best Time Shift';
+            app.AutoShiftButton.Text = '⏱️ Auto-Detect Timeline Shift';
             app.AutoShiftButton.FontSize = 10;
             app.AutoShiftButton.FontWeight = 'bold';
             app.AutoShiftButton.BackgroundColor = [0.9 0.9 0.9];
@@ -3276,38 +3185,89 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
 
             app.AnalyzeButton = uibutton(app.LeftGrid, 'push');
             app.AnalyzeButton.Layout.Row = 12;
-            app.AnalyzeButton.Text = '3️⃣ ANALYZE';
-            app.AnalyzeButton.FontSize = 13;
+            app.AnalyzeButton.Text = '3️⃣ RUN ANALYSIS';
+            app.AnalyzeButton.FontSize = 12;
             app.AnalyzeButton.FontWeight = 'bold';
             app.AnalyzeButton.BackgroundColor = [0.3 0.75 0.93];
             app.AnalyzeButton.FontColor = [1 1 1];
             app.AnalyzeButton.ButtonPushedFcn = createCallbackFcn(app, @AnalyzeButtonPushed, true);
 
-            app.ExportButton = uibutton(app.LeftGrid, 'push');
-            app.ExportButton.Layout.Row = 13;
-            app.ExportButton.Text = '📊 Export Analysis';
-            app.ExportButton.FontSize = 11;
-            app.ExportButton.Enable = 'off';
-            app.ExportButton.ButtonPushedFcn = createCallbackFcn(app, @ExportButtonPushed, true);
+            % Fitting Window Panel
+            app.FitWindowPanel = uipanel(app.LeftGrid);
+            app.FitWindowPanel.Layout.Row = 13;
+            app.FitWindowPanel.Title = '📐 Fitting Window';
+            app.FitWindowPanel.FontWeight = 'bold';
+            app.FitWindowPanel.FontSize = 10;
+            app.FitWindowPanel.BackgroundColor = [0.94 0.97 1.0];
+            app.FitWindowPanel.Scrollable = 'off';
 
-            app.ExportFigureButton = uibutton(app.LeftGrid, 'push');
-            app.ExportFigureButton.Layout.Row = 14;
-            app.ExportFigureButton.Text = '🖼️ Export Figures (SVG)';
-            app.ExportFigureButton.FontSize = 11;
-            app.ExportFigureButton.Enable = 'off';
-            app.ExportFigureButton.BackgroundColor = [0.25 0.55 0.35];
-            app.ExportFigureButton.FontColor = [1 1 1];
-            app.ExportFigureButton.ButtonPushedFcn = createCallbackFcn(app, @ExportFigureButtonPushed, true);
+            fwGrid = uigridlayout(app.FitWindowPanel, [8 1]);
+            fwGrid.ColumnWidth = {'1x'};
+            fwGrid.RowHeight = {'fit','fit','fit','fit','fit','fit','fit','fit'};
+            fwGrid.Padding = [8 6 8 6];
+            fwGrid.RowSpacing = 4;
 
-            app.StatusLabel = uilabel(app.LeftGrid);
-            app.StatusLabel.Layout.Row = 15;
-            app.StatusLabel.Text = 'Ready';
-            app.StatusLabel.FontColor = [0.2 0.6 0.2];
-            app.StatusLabel.FontSize = 10;
+            app.FitWindowCheckBox = uicheckbox(fwGrid);
+            app.FitWindowCheckBox.Layout.Row = 1;
+            app.FitWindowCheckBox.Text = 'Enable fitting window';
+            app.FitWindowCheckBox.Value = false;
+            app.FitWindowCheckBox.FontSize = 9;
+            app.FitWindowCheckBox.FontWeight = 'bold';
+            app.FitWindowCheckBox.ValueChangedFcn = createCallbackFcn(app, @FitWindowCheckBoxChanged, true);
 
+            app.FitWindowStartLabel = uilabel(fwGrid);
+            app.FitWindowStartLabel.Layout.Row = 2;
+            app.FitWindowStartLabel.Text = 'Window start (dd.MM.yyyy HH:mm):';
+            app.FitWindowStartLabel.FontSize = 8;
+
+            app.FitWindowStartEdit = uieditfield(fwGrid, 'text');
+            app.FitWindowStartEdit.Layout.Row = 3;
+            app.FitWindowStartEdit.Value = '';
+            app.FitWindowStartEdit.FontSize = 9;
+            app.FitWindowStartEdit.FontName = 'Consolas';
+            app.FitWindowStartEdit.Placeholder = 'e.g. 01.02.2026 11:00';
+
+            app.FitWindowEndLabel = uilabel(fwGrid);
+            app.FitWindowEndLabel.Layout.Row = 4;
+            app.FitWindowEndLabel.Text = 'Window end (dd.MM.yyyy HH:mm):';
+            app.FitWindowEndLabel.FontSize = 8;
+
+            app.FitWindowEndEdit = uieditfield(fwGrid, 'text');
+            app.FitWindowEndEdit.Layout.Row = 5;
+            app.FitWindowEndEdit.Value = '';
+            app.FitWindowEndEdit.FontSize = 9;
+            app.FitWindowEndEdit.FontName = 'Consolas';
+            app.FitWindowEndEdit.Placeholder = 'e.g. 01.02.2026 18:00';
+
+            app.FitWindowAutoButton = uibutton(fwGrid, 'push');
+            app.FitWindowAutoButton.Layout.Row = 6;
+            app.FitWindowAutoButton.Text = '🎯 Auto Window Overlap';
+            app.FitWindowAutoButton.FontSize = 9;
+            app.FitWindowAutoButton.FontWeight = 'bold';
+            app.FitWindowAutoButton.BackgroundColor = [0.15 0.55 0.35];
+            app.FitWindowAutoButton.FontColor = [1 1 1];
+            app.FitWindowAutoButton.ButtonPushedFcn = createCallbackFcn(app, @FitWindowAutoButtonPushed, true);
+
+            applyBtn = uibutton(fwGrid, 'push');
+            applyBtn.Layout.Row = 7;
+            applyBtn.Text = '✓ Apply typed window';
+            applyBtn.FontSize = 9;
+            applyBtn.FontWeight = 'bold';
+            applyBtn.BackgroundColor = [0.25 0.55 0.85];
+            applyBtn.FontColor = [1 1 1];
+            applyBtn.ButtonPushedFcn = createCallbackFcn(app, @FitWindowApplyButtonPushed, true);
+
+            app.StabilityScoreLabel = uilabel(fwGrid);
+            app.StabilityScoreLabel.Layout.Row = 8;
+            app.StabilityScoreLabel.Text = 'Apply correction to see stability';
+            app.StabilityScoreLabel.FontSize = 8;
+            app.StabilityScoreLabel.FontColor = [0.4 0.4 0.4];
+            app.StabilityScoreLabel.WordWrap = 'on';  
+
+            % Stats Panel
             app.StatsPanel = uipanel(app.LeftGrid);
-            app.StatsPanel.Layout.Row = 16;
-            app.StatsPanel.Title = 'Statistics';
+            app.StatsPanel.Layout.Row = 14;
+            app.StatsPanel.Title = 'Descriptive Agreement Statistics';
             app.StatsPanel.FontWeight = 'bold';
             app.StatsPanel.FontSize = 10;
             app.StatsPanel.BackgroundColor = [1 1 1];
@@ -3375,111 +3335,38 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             app.SlopeWarningLabel.WordWrap = 'on';
             app.SlopeWarningLabel.Visible = 'off';
 
+            % Correction Panel
             app.CorrectionPanel = uipanel(app.LeftGrid);
-            app.CorrectionPanel.Layout.Row = 18;
-            app.CorrectionPanel.Title = '🔧 CDI Correction';
+            app.CorrectionPanel.Layout.Row = 15;
+            app.CorrectionPanel.Title = '🔧 Method Correction & Tuning';
             app.CorrectionPanel.FontWeight = 'bold';
             app.CorrectionPanel.FontSize = 10;
             app.CorrectionPanel.BackgroundColor = [1 1 0.95];
             app.CorrectionPanel.Scrollable = 'on';
             app.CorrectionPanel.AutoResizeChildren = 'off';
 
-            app.FitWindowPanel = uipanel(app.LeftGrid);
-            app.FitWindowPanel.Layout.Row = 17;
-            app.FitWindowPanel.Title = '📐 Fitting Window';
-            app.FitWindowPanel.FontWeight = 'bold';
-            app.FitWindowPanel.FontSize = 10;
-            app.FitWindowPanel.BackgroundColor = [0.94 0.97 1.0];
-            app.FitWindowPanel.Scrollable = 'off';
-
-            fwGrid = uigridlayout(app.FitWindowPanel, [8 1]);
-            fwGrid.ColumnWidth = {'1x'};
-            fwGrid.RowHeight = {'fit','fit','fit','fit','fit','fit','fit','fit'};
-            fwGrid.Padding = [8 6 8 6];
-            fwGrid.RowSpacing = 4;
-
-            app.FitWindowCheckBox = uicheckbox(fwGrid);
-            app.FitWindowCheckBox.Layout.Row = 1;
-            app.FitWindowCheckBox.Text = 'Enable fitting window';
-            app.FitWindowCheckBox.Value = false;
-            app.FitWindowCheckBox.FontSize = 9;
-            app.FitWindowCheckBox.FontWeight = 'bold';
-            app.FitWindowCheckBox.Tooltip = 'Restrict statistics and model fitting to this window. Formula is applied to the full CDI signal.';
-            app.FitWindowCheckBox.ValueChangedFcn = createCallbackFcn(app, @FitWindowCheckBoxChanged, true);
-
-            app.FitWindowStartLabel = uilabel(fwGrid);
-            app.FitWindowStartLabel.Layout.Row = 2;
-            app.FitWindowStartLabel.Text = 'Window start (dd.MM.yyyy HH:mm):';
-            app.FitWindowStartLabel.FontSize = 8;
-
-            app.FitWindowStartEdit = uieditfield(fwGrid, 'text');
-            app.FitWindowStartEdit.Layout.Row = 3;
-            app.FitWindowStartEdit.Value = '';
-            app.FitWindowStartEdit.FontSize = 9;
-            app.FitWindowStartEdit.FontName = 'Consolas';
-            app.FitWindowStartEdit.Placeholder = 'e.g. 01.02.2026 11:00';
-
-            app.FitWindowEndLabel = uilabel(fwGrid);
-            app.FitWindowEndLabel.Layout.Row = 4;
-            app.FitWindowEndLabel.Text = 'Window end (dd.MM.yyyy HH:mm):';
-            app.FitWindowEndLabel.FontSize = 8;
-
-            app.FitWindowEndEdit = uieditfield(fwGrid, 'text');
-            app.FitWindowEndEdit.Layout.Row = 5;
-            app.FitWindowEndEdit.Value = '';
-            app.FitWindowEndEdit.FontSize = 9;
-            app.FitWindowEndEdit.FontName = 'Consolas';
-            app.FitWindowEndEdit.Placeholder = 'e.g. 01.02.2026 18:00';
-
-            app.FitWindowAutoButton = uibutton(fwGrid, 'push');
-            app.FitWindowAutoButton.Layout.Row = 6;
-            app.FitWindowAutoButton.Text = '🎯 Auto Window (first-last ABL in CDI)';
-            app.FitWindowAutoButton.FontSize = 9;
-            app.FitWindowAutoButton.FontWeight = 'bold';
-            app.FitWindowAutoButton.BackgroundColor = [0.15 0.55 0.35];
-            app.FitWindowAutoButton.FontColor = [1 1 1];
-            app.FitWindowAutoButton.Tooltip = 'Set window from first to last ABL draw that falls within the CDI recording. Enables the checkbox automatically.';
-            app.FitWindowAutoButton.ButtonPushedFcn = createCallbackFcn(app, @FitWindowAutoButtonPushed, true);
-
-            applyBtn = uibutton(fwGrid, 'push');
-            applyBtn.Layout.Row = 7;
-            applyBtn.Text = '✓ Apply typed window';
-            applyBtn.FontSize = 9;
-            applyBtn.FontWeight = 'bold';
-            applyBtn.BackgroundColor = [0.25 0.55 0.85];
-            applyBtn.FontColor = [1 1 1];
-            applyBtn.Tooltip = 'Apply the start/end times typed above. Enables the checkbox automatically.';
-            applyBtn.ButtonPushedFcn = createCallbackFcn(app, @FitWindowApplyButtonPushed, true);
-
-            app.StabilityScoreLabel = uilabel(fwGrid);
-            app.StabilityScoreLabel.Layout.Row = 8;
-            app.StabilityScoreLabel.Text = 'Apply correction to see stability score';
-            app.StabilityScoreLabel.FontSize = 8;
-            app.StabilityScoreLabel.FontColor = [0.4 0.4 0.4];
-            app.StabilityScoreLabel.WordWrap = 'on';  
-
-            app.CorrectionGrid = uigridlayout(app.CorrectionPanel, [17 1]); 
+            app.CorrectionGrid = uigridlayout(app.CorrectionPanel, [19 1]); 
             app.CorrectionGrid.ColumnWidth = {'1x'};
-            app.CorrectionGrid.RowHeight = {'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 150, 'fit'};
+            app.CorrectionGrid.RowHeight = {'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 140, 'fit'};
             app.CorrectionGrid.Padding = [8 8 8 8];
-            app.CorrectionGrid.RowSpacing = 5;
+            app.CorrectionGrid.RowSpacing = 4;
             app.CorrectionGrid.Scrollable = 'on';
 
             app.CorrectionMethodLabel = uilabel(app.CorrectionGrid);
             app.CorrectionMethodLabel.Layout.Row = 1;
-            app.CorrectionMethodLabel.Text = 'Correction Method:';
+            app.CorrectionMethodLabel.Text = 'Correction Model:';
             app.CorrectionMethodLabel.FontSize = 9;
             app.CorrectionMethodLabel.FontWeight = 'bold';
 
             app.CorrectionMethodDropDown = uidropdown(app.CorrectionGrid);
             app.CorrectionMethodDropDown.Layout.Row = 2;
-            app.CorrectionMethodDropDown.Items = {'Auto (Best Model)', 'Hybrid (Time-Series + Deming)', 'Bias Correction', 'OLS (ABL is X)', 'Proportional Correction', 'Deming Regression', 'Passing-Bablok'};
+            app.CorrectionMethodDropDown.Items = {'Auto (Best Model)', 'Weighted Deming (Linnet)', 'Hybrid (Time-Series + Deming)', 'Deming Regression', 'Bias Correction', 'OLS (ABL is X)', 'Proportional Correction', 'Passing-Bablok'};
             app.CorrectionMethodDropDown.Value = 'Auto (Best Model)';
             app.CorrectionMethodDropDown.FontSize = 10;
 
             app.DemingLambdaLabel = uilabel(app.CorrectionGrid);
             app.DemingLambdaLabel.Layout.Row = 3;
-            app.DemingLambdaLabel.Text = 'Deming λ (Variance ABL/CDI):';
+            app.DemingLambdaLabel.Text = 'Deming λ (Variance Ratio ABL/CDI):';
             app.DemingLambdaLabel.FontSize = 9;
 
             app.DemingLambdaEditField = uieditfield(app.CorrectionGrid, 'numeric');
@@ -3489,7 +3376,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
 
             app.TauLabel = uilabel(app.CorrectionGrid);
             app.TauLabel.Layout.Row = 5;
-            app.TauLabel.Text = 'Hybrid τ time constant (min):';
+            app.TauLabel.Text = 'Hybrid τ_rise (min):';
             app.TauLabel.FontSize = 9;
 
             app.TauSpinner = uispinner(app.CorrectionGrid);
@@ -3498,29 +3385,38 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             app.TauSpinner.Step = 0.5;
             app.TauSpinner.Limits = [0 20];
 
+            app.TauFallLabel = uilabel(app.CorrectionGrid);
+            app.TauFallLabel.Layout.Row = 7;
+            app.TauFallLabel.Text = 'Hybrid τ_fall (min):';
+            app.TauFallLabel.FontSize = 9;
+
+            app.TauFallSpinner = uispinner(app.CorrectionGrid);
+            app.TauFallSpinner.Layout.Row = 8;
+            app.TauFallSpinner.Value = 1.5;
+            app.TauFallSpinner.Step = 0.5;
+            app.TauFallSpinner.Limits = [0 20];
+
             app.SmoothW1Label = uilabel(app.CorrectionGrid);
-            app.SmoothW1Label.Layout.Row = 7;
+            app.SmoothW1Label.Layout.Row = 9;
             app.SmoothW1Label.Text = 'Smooth window W1 (samples):';
             app.SmoothW1Label.FontSize = 9;
-            app.SmoothW1Label.Tooltip = 'Pre-smooth window for derivative. Larger = smoother corrected signal, less noise amplification. AutoTune optimises this too.';
 
             app.SmoothW1Spinner = uispinner(app.CorrectionGrid);
-            app.SmoothW1Spinner.Layout.Row = 8;
+            app.SmoothW1Spinner.Layout.Row = 10;
             app.SmoothW1Spinner.Value = 8;
             app.SmoothW1Spinner.Step = 4;
             app.SmoothW1Spinner.Limits = [2 64];
-            app.SmoothW1Spinner.Tooltip = 'W1=8: default. W1=16-24: smoother for noisy signals (K+, pO2). W1=4: more responsive for slow-moving parameters.';
 
             app.AutoTuneButton = uibutton(app.CorrectionGrid, 'push');
-            app.AutoTuneButton.Layout.Row = 9;
-            app.AutoTuneButton.Text = '⚙️ Auto-Tune Hybrid Params';
-            app.AutoTuneButton.FontSize = 10;
+            app.AutoTuneButton.Layout.Row = 11;
+            app.AutoTuneButton.Text = '⚙️ Auto-Tune Params (Single Fit)';
+            app.AutoTuneButton.FontSize = 9;
             app.AutoTuneButton.FontWeight = 'bold';
             app.AutoTuneButton.BackgroundColor = [0.9 0.9 0.9];
             app.AutoTuneButton.ButtonPushedFcn = createCallbackFcn(app, @AutoTuneButtonPushed, true);
 
             app.ApplyCorrectionButton = uibutton(app.CorrectionGrid, 'push');
-            app.ApplyCorrectionButton.Layout.Row = 10;
+            app.ApplyCorrectionButton.Layout.Row = 12;
             app.ApplyCorrectionButton.Text = '✓ Apply Correction';
             app.ApplyCorrectionButton.FontSize = 11;
             app.ApplyCorrectionButton.FontWeight = 'bold';
@@ -3530,7 +3426,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             app.ApplyCorrectionButton.ButtonPushedFcn = createCallbackFcn(app, @ApplyCorrectionButtonPushed, true);
 
             app.ExportCorrectedButton = uibutton(app.CorrectionGrid, 'push');
-            app.ExportCorrectedButton.Layout.Row = 11;
+            app.ExportCorrectedButton.Layout.Row = 13;
             app.ExportCorrectedButton.Text = '💾 Export Corrected';
             app.ExportCorrectedButton.FontSize = 10;
             app.ExportCorrectedButton.FontWeight = 'bold';
@@ -3540,8 +3436,8 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             app.ExportCorrectedButton.ButtonPushedFcn = createCallbackFcn(app, @ExportCorrectedButtonPushed, true);
 
             app.ShowFormulaButton = uibutton(app.CorrectionGrid, 'push');
-            app.ShowFormulaButton.Layout.Row = 12;
-            app.ShowFormulaButton.Text = '📐 Show Formula';
+            app.ShowFormulaButton.Layout.Row = 14;
+            app.ShowFormulaButton.Text = '📐 Show Formula & LaTeX';
             app.ShowFormulaButton.FontSize = 10;
             app.ShowFormulaButton.FontWeight = 'bold';
             app.ShowFormulaButton.BackgroundColor = [0.95 0.7 0.3];
@@ -3549,7 +3445,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             app.ShowFormulaButton.ButtonPushedFcn = createCallbackFcn(app, @ShowFormulaButtonPushed, true);
 
             app.ComparePlotsButton = uibutton(app.CorrectionGrid, 'push');
-            app.ComparePlotsButton.Layout.Row = 13;
+            app.ComparePlotsButton.Layout.Row = 15;
             app.ComparePlotsButton.Text = '📊 Compare Before/After';
             app.ComparePlotsButton.FontSize = 10;
             app.ComparePlotsButton.FontWeight = 'bold';
@@ -3559,20 +3455,20 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             app.ComparePlotsButton.ButtonPushedFcn = createCallbackFcn(app, @ComparePlotsButtonPushed, true);
 
             app.CorrectionStatusLabel = uilabel(app.CorrectionGrid);
-            app.CorrectionStatusLabel.Layout.Row = 14;
+            app.CorrectionStatusLabel.Layout.Row = 16;
             app.CorrectionStatusLabel.Text = 'No correction applied';
             app.CorrectionStatusLabel.FontSize = 8;
             app.CorrectionStatusLabel.FontColor = [0.5 0.5 0.5];
             app.CorrectionStatusLabel.HorizontalAlignment = 'center';
 
             app.FormulaLabel = uilabel(app.CorrectionGrid);
-            app.FormulaLabel.Layout.Row = 15;
-            app.FormulaLabel.Text = 'Correction Formula:';
-            app.FormulaLabel.FontSize = 10;
+            app.FormulaLabel.Layout.Row = 17;
+            app.FormulaLabel.Text = 'Mathematical Model Formula:';
+            app.FormulaLabel.FontSize = 9;
             app.FormulaLabel.FontWeight = 'bold';
 
             app.FormulaTextArea = uitextarea(app.CorrectionGrid);
-            app.FormulaTextArea.Layout.Row = 16;
+            app.FormulaTextArea.Layout.Row = 18;
             app.FormulaTextArea.FontSize = 9;
             app.FormulaTextArea.FontName = 'Consolas';
             app.FormulaTextArea.Editable = 'off';
@@ -3581,7 +3477,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             app.FormulaTextArea.WordWrap = 'on';
 
             app.SmallNWarningLabel = uilabel(app.CorrectionGrid);
-            app.SmallNWarningLabel.Layout.Row = 17;
+            app.SmallNWarningLabel.Layout.Row = 19;
             app.SmallNWarningLabel.Text = '';
             app.SmallNWarningLabel.FontSize = 9;
             app.SmallNWarningLabel.FontWeight = 'bold';
@@ -3590,16 +3486,38 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             app.SmallNWarningLabel.WordWrap = 'on';
             app.SmallNWarningLabel.Visible = 'off';
 
+            app.ExportButton = uibutton(app.LeftGrid);
+            app.ExportButton.Layout.Row = 16;
+            app.ExportButton.Text = '📊 Export Analysis Stats';
+            app.ExportButton.FontSize = 10;
+            app.ExportButton.Enable = 'off';
+            app.ExportButton.ButtonPushedFcn = createCallbackFcn(app, @ExportButtonPushed, true);
 
+            app.ExportFigureButton = uibutton(app.LeftGrid);
+            app.ExportFigureButton.Layout.Row = 17;
+            app.ExportFigureButton.Text = '🖼️ Export Report Figures (SVG)';
+            app.ExportFigureButton.FontSize = 10;
+            app.ExportFigureButton.Enable = 'off';
+            app.ExportFigureButton.BackgroundColor = [0.25 0.55 0.35];
+            app.ExportFigureButton.FontColor = [1 1 1];
+            app.ExportFigureButton.ButtonPushedFcn = createCallbackFcn(app, @ExportFigureButtonPushed, true);
+
+            app.StatusLabel = uilabel(app.LeftGrid);
+            app.StatusLabel.Layout.Row = 18;
+            app.StatusLabel.Text = 'Ready';
+            app.StatusLabel.FontColor = [0.2 0.6 0.2];
+            app.StatusLabel.FontSize = 10;
+
+            % Right Visualization Panel
             app.RightPanel = uipanel(app.GridLayout);
             app.RightPanel.Layout.Row = 1;
             app.RightPanel.Layout.Column = 2;
-            app.RightPanel.Title = 'Analysis Results';
+            app.RightPanel.Title = 'Diagnostic Visualization & Analysis';
             app.RightPanel.FontWeight = 'bold';
 
             app.RightGrid = uigridlayout(app.RightPanel, [4 3]);
             app.RightGrid.ColumnWidth = {'1x', '1x', '1x'};
-            app.RightGrid.RowHeight = {'1x', 'fit', 'fit', '1x'};
+            app.RightGrid.RowHeight = {'1.2x', 'fit', 'fit', '1x'};
             app.RightGrid.Padding = [10 10 10 10];
 
             app.TimeAxes = uiaxes(app.RightGrid);
@@ -3634,7 +3552,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             app.CorrViewSwitch = uicheckbox(app.RightGrid);
             app.CorrViewSwitch.Layout.Row = 3;
             app.CorrViewSwitch.Layout.Column = 1;
-            app.CorrViewSwitch.Text = 'Show corrected correlation';
+            app.CorrViewSwitch.Text = 'Show corrected scatter';
             app.CorrViewSwitch.FontSize = 10;
             app.CorrViewSwitch.Enable = 'off';
             app.CorrViewSwitch.ValueChangedFcn = createCallbackFcn(app, @CorrViewSwitchChanged, true);
@@ -3676,7 +3594,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             nLines = numel(statsLines);
             yStep = 0.88 / (nLines + 2);
 
-            text(ax, 0.05, 0.94, sprintf('Before vs After  -  %s  (%s)', param, methodName), ...
+            text(ax, 0.05, 0.94, sprintf('Before vs After - %s  (%s)', param, methodName), ...
                 'Units','normalized','FontSize',9,'FontWeight','bold',...
                 'Color',[0.15 0.25 0.55],'Interpreter','none','FontName','Consolas');
 
@@ -3700,7 +3618,6 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
         end
 
         function exportCompareFigure(fig, param, fmt)
-            % Export the Compare Before/After uifigure as a publication-quality file
             safeParam = regexprep(string(param), '[^a-zA-Z0-9_]', '_');
             defaultName = sprintf('Compare_Before_After_%s', safeParam);
             
@@ -3738,7 +3655,6 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
         end
         
         function saveCompareFigureAs(fig, param)
-            % File > Save As - prompt for format
             choice = uiconfirm(fig, 'Choose output format:', 'Save Figure As', ...
                 'Options', {'SVG (vector)', 'PNG (300 DPI)', 'PDF', 'Cancel'}, ...
                 'DefaultOption', 1, 'CancelOption', 4);
@@ -3753,10 +3669,8 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
         end
         
         function copyCompareFigure(fig)
-            % Copy figure to system clipboard as image
             try
                 copygraphics(fig, 'Resolution', 300, 'BackgroundColor', 'white');
-                % Optional confirmation toast - comment out if too noisy
                 disp('Compare figure copied to clipboard.');
             catch ME
                 uialert(fig, ['Copy to clipboard failed: ' ME.message], 'Copy Error');
@@ -3764,7 +3678,6 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
         end
         
         function printCompareFigure(fig)
-            % Send figure to system printer
             try
                 print(fig, '-dprinter');
             catch ME
