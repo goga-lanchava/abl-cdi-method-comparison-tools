@@ -34,6 +34,10 @@
   not clinical acceptance criteria
 - Fixed a LaTeX export bug where the τ (tau) symbol in the Hybrid model
   formula used a literal Unicode character instead of the `\tau` command
+- `WALKTHROUGH.md` §2 updated to distinguish the all-pairs pre-correction
+  SD (0.095, 67/68 pairs) from the MAD-retained-pairs-only SD comparison
+  (0.047 → 0.043, 61/67 pairs) the article now quotes, including where in
+  the software's output each figure is found
 
 ## PatLogGUI v1
 - Automatic delimiter/decimal-notation detection for CSV/Excel imports
