@@ -37,8 +37,10 @@ using this data.
    `pH`), and click **Analyze**.
 5. Select **Auto (Best Model)** under Correction Method and click **Apply
    Correction** to reproduce the auto-selected correction results reported
-   in the article (e.g. for Dataset 2026027, pH: Hybrid correction, bias
-   reduced to ~0.000, SD reduced by ~56%).
+   in the article (e.g. for Dataset 2026027, pH: Linnet weighted-Deming
+   correction, λ=0.10, bias reduced to ~0.000, SD reduced by ~10% on the
+   61/67 MAD-retained pairs — see `../WALKTHROUGH.md` §2 for the exact
+   figures and where each one appears in the software's output).
 
 See `../ABL_CDI_Analyzer/docs/DATA_FORMATS.md` and
 `../PatLogGUI/docs/DATA_FORMAT.md` for the exact file-format specifications

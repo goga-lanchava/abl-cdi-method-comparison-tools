@@ -36,6 +36,13 @@ tells you where each one comes from so both are independently checkable:
   because `ExportFigureButtonPushed` recomputes the before-stats restricted
   to the same pairs used for the after-stats (see step 7).
 
+> **Note:** the current source includes a fix to the LOO-CV procedure
+> (removing a hyperparameter data-leakage issue for the Deming λ and Hybrid
+> Auto-Tune parameters), adds Weighted Deming (Linnet) as a 7th Auto/LOO-CV
+> candidate, and changes how outlier points are masked in the exported
+> corrected series (see CHANGELOG.md). These can shift the exact figures
+> below, and even which candidate wins, by a small amount; re-verify against
+> your build rather than treating these as exact expected output.
 
 1. Launch `ABL_CDI_Analyzer` (source or compiled executable).
 2. **Load ABL Data** → `examples/PatLog_export.csv`.

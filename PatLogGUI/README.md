@@ -29,7 +29,8 @@ filterable exploration of the resulting dataset.
 
 ## Requirements
 
-- MATLAB R2025b or later (App Designer)
+- MATLAB R2025b (developed and tested in this version; compatibility with
+  other MATLAB releases has not been verified)
 - No additional toolboxes identified as required by static inspection;
   please confirm against your MATLAB installation before first use.
 
