@@ -1,6 +1,5 @@
-# Code metadata (SoftwareX submission table)
+# Code metadata
 
-Fill in the bracketed fields before submission.
 
 | Nr. | Code metadata description | Metadata |
 |---|---|---|
