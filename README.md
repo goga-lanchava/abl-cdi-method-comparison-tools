@@ -19,9 +19,9 @@ See each tool's own README for details, requirements, and usage instructions.
   of the source — please confirm in a clean MATLAB install before relying on
   this for your own environment.
 
-Compiled standalone Windows executables (bundling the MATLAB Runtime, so no
+Compiled standalone Windows executables (no
 MATLAB license is needed to run them) are published under the
-[Executables release](../../releases/tag/Executables).
+[Executables release](../../releases/tag/v1).
 
 ## Reproducing the article's results
 
