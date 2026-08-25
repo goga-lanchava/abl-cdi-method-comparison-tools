@@ -70,7 +70,7 @@ tells you where each one comes from so both are independently checkable:
    0.043 (≈10% reduction on unrounded values) comparison quoted in the
    article's Fig. 4 discussion.
 
-## 3. Dataset 2026007 (article Fig. 5; the small/unstable recording)
+## 3. Dataset 2026007 (article Fig. 5; small recording)
 
 Repeat step 2 with `examples/2026007_cdi.log` and Patient ID `2026007`,
 selecting **pO2** as the parameter, to reproduce the N=10 result discussed
