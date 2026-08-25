@@ -15,9 +15,7 @@ See each tool's own README for details, requirements, and usage instructions.
 
 - MATLAB R2025b (developed and tested in this version; compatibility with
   other MATLAB releases has not been verified)
-- No additional toolboxes required beyond core MATLAB, based on static review
-  of the source — please confirm in a clean MATLAB install before relying on
-  this for your own environment.
+- No additional toolboxes required beyond core MATLAB
 
 Compiled standalone Windows executables (no
 MATLAB license is needed to run them) are published under the
