@@ -1,4 +1,4 @@
-# ABG analyzes and ABL–CDI measurement methods comparison and correction Tools
+# ABG analyzes and ABL–CDI measurement methods comparison and correction tools
 
 Two MATLAB App Designer applications for working with blood gas data from the
 ABL Flex 800 (intermittent electrochemical analyzer) and the Terumo CDI 500
