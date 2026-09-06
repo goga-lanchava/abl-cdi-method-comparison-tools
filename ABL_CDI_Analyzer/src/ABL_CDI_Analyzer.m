@@ -1538,15 +1538,9 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             end
             [file, path] = uiputfile({'*.xlsx';'*.csv'}, 'Save Results As');
             if isequal(file,0), return; end
-            fullpath = fullfile(path, file);
             try
-                statsTable = struct2table(app.Stats);
-                writetable(statsTable, fullpath, 'Sheet', 'Statistics');
-                if ~isempty(app.Aligned_Data)
-                    dataTable = timetable2table(app.Aligned_Data);
-                    writetable(dataTable, fullpath, 'Sheet', 'PairedData');
-                end
-                app.StatusLabel.Text = ['Exported to: ' file];
+                written = exportResultsTo(app, fullfile(path, file));
+                app.StatusLabel.Text = ['Exported to: ' strjoin(written, ', ')];
             catch ME
                 uialert(app.UIFigure, ['Export failed: ' ME.message], 'Export Error');
             end
@@ -3576,6 +3570,119 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             app.BlandAltmanAxes.Box = 'on';
 
             app.UIFigure.Visible = 'on';
+        end
+    end
+
+    methods (Access = public)
+
+        % Writes the analysis results to fullpath and returns the names of
+        % the files written. .xlsx gets one workbook with a Statistics and a
+        % PairedData sheet; .csv has no sheets, so the two tables are written
+        % as <base>_statistics.csv and <base>_paireddata.csv.
+        function written = exportResultsTo(app, fullpath)
+            [folder, baseName, ext] = fileparts(fullpath);
+
+            % Summary table holds the scalar statistics only. Stats also
+            % carries the paired vectors (xABL, yCDI, p), and a struct mixing
+            % scalars with N-element vectors cannot be converted by
+            % struct2table; the pairs go to PairedData instead.
+            summary = struct();
+            fn = fieldnames(app.Stats);
+            for i = 1:numel(fn)
+                v = app.Stats.(fn{i});
+                if ischar(v) || isstring(v) || isscalar(v)
+                    summary.(fn{i}) = v;
+                end
+            end
+            statsTable = struct2table(summary, 'AsArray', true);
+
+            if ~isempty(app.Aligned_Data)
+                dataTable = timetable2table(app.Aligned_Data);
+            else
+                dataTable = table();
+            end
+
+            if strcmpi(ext, '.csv')
+                statsName = [baseName '_statistics.csv'];
+                writetable(statsTable, fullfile(folder, statsName));
+                written = {statsName};
+                if ~isempty(dataTable)
+                    pairName = [baseName '_paireddata.csv'];
+                    writetable(dataTable, fullfile(folder, pairName));
+                    written{end+1} = pairName;
+                end
+            else
+                writetable(statsTable, fullpath, 'Sheet', 'Statistics');
+                if ~isempty(dataTable)
+                    writetable(dataTable, fullpath, 'Sheet', 'PairedData');
+                end
+                written = {[baseName ext]};
+            end
+        end
+
+        % Scripted equivalent of the WALKTHROUGH.md workflow: loads both
+        % files, selects patient / parameter / tolerance, optionally sets the
+        % Auto fitting window, runs the analysis, and optionally applies a
+        % correction. Returns the statistics exactly as the panel shows them,
+        % so batch runs and the test suite read the same strings a user sees.
+        function out = runWorkflow(app, ablPath, cdiPath, patientID, param, opts)
+            arguments
+                app
+                ablPath   {mustBeTextScalar}
+                cdiPath   {mustBeTextScalar}
+                patientID {mustBeTextScalar}
+                param     {mustBeTextScalar}
+                opts.TimeTolerance (1,1) double = 5
+                opts.FitWindowAuto (1,1) logical = false
+                opts.CorrectionMethod {mustBeTextScalar} = ''
+            end
+
+            [tbl, patientIDs] = parseABL(app, char(ablPath));
+            app.ABL_Table_Full = tbl;
+            app.ABL_PatientIDs = patientIDs;
+            app.ABL_Table      = tbl;
+            app.PatientIDDropDown.Items = [{'All Patients'}, patientIDs(:)'];
+            app.PatientIDDropDown.Value = char(patientID);
+            PatientIDDropDownValueChanged(app);
+
+            app.CDI_Table = parseCDI(app, char(cdiPath));
+            updateCommonParameters(app);
+
+            app.ParamDropDown.Value        = char(param);
+            app.TimeToleranceSpinner.Value = opts.TimeTolerance;
+
+            AnalyzeButtonPushed(app);
+            if opts.FitWindowAuto
+                app.FitWindowCheckBox.Value = true;
+                FitWindowCheckBoxChanged(app);
+                FitWindowAutoButtonPushed(app);
+                AnalyzeButtonPushed(app);
+            end
+
+            out = struct( ...
+                'nPairsText',    app.NPairsLabel.Text, ...
+                'biasText',      app.BiasLabel.Text, ...
+                'sdText',        app.SDLabel.Text, ...
+                'loaText',       app.LOALabel.Text, ...
+                'rText',         app.CorrelationLabel.Text, ...
+                'stats',         app.Stats, ...
+                'formula',       '', ...
+                'afterBiasText', '', ...
+                'afterSDText',   '', ...
+                'qualityText',   '', ...
+                'model',         struct());
+
+            if ~isempty(char(opts.CorrectionMethod))
+                app.CorrectionMethodDropDown.Value = char(opts.CorrectionMethod);
+                ApplyCorrectionButtonPushed(app);
+                out.model         = app.CorrectionModel;
+                out.afterBiasText = app.ImprovedBiasLabel.Text;
+                out.afterSDText   = app.ImprovedSDLabel.Text;
+                out.qualityText   = app.CorrQualityLabel.Text;
+                if isfield(app.CorrectionModel, 'formula')
+                    out.formula = app.CorrectionModel.formula;
+                end
+            end
         end
     end
 
