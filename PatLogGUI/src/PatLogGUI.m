@@ -1,4 +1,59 @@
-function PatLogGUI()
+function PatLogGUI(initialFile)
+
+    % Returns the encoding to read fname with. ABL Flex 800 exports are
+    % usually Latin-1 (the degree sign in the temperature header is a bare
+    % 0xB0), but UTF-8 exports also occur, so use UTF-8 only when the bytes
+    % actually decode as UTF-8.
+    function enc = detectFileEncoding(fname)
+        enc = 'UTF-8';
+        fid = fopen(fname, 'r');
+        if fid == -1
+            return;
+        end
+        bytes = fread(fid, 65536, '*uint8');
+        fclose(fid);
+        if isempty(bytes)
+            return;
+        end
+        if numel(bytes) >= 3 && isequal(bytes(1:3), uint8([239; 187; 191]))
+            return;  % UTF-8 byte order mark
+        end
+        if any(bytes > 127) && ~isValidUTF8(bytes)
+            enc = 'ISO-8859-1';
+        end
+    end
+
+    function ok = isValidUTF8(bytes)
+        ok = true;
+        i = 1;
+        n = numel(bytes);
+        while i <= n
+            c = bytes(i);
+            if c < 128
+                i = i + 1;
+                continue;
+            elseif c >= 194 && c <= 223
+                len = 2;
+            elseif c >= 224 && c <= 239
+                len = 3;
+            elseif c >= 240 && c <= 244
+                len = 4;
+            else
+                ok = false;
+                return;
+            end
+            if i + len - 1 > n
+                ok = false;
+                return;
+            end
+            continuation = bytes(i+1 : i+len-1);
+            if any(continuation < 128 | continuation > 191)
+                ok = false;
+                return;
+            end
+            i = i + len;
+        end
+    end
 
     % Helper function to convert any value to numeric
     function numVal = toNumber(val)
@@ -228,6 +283,12 @@ function PatLogGUI()
     tablePanel = uipanel(rightGrid, 'Title', 'Patient Data Records');
     dataTable = uitable(tablePanel, 'Position', [10 10 1125 320]);
     
+    % Optional scripted entry point: PatLogGUI(filePath) opens the app with
+    % that export already imported, skipping the file dialog.
+    if nargin > 0 && ~isempty(initialFile)
+        loadFile(char(initialFile));
+    end
+    
     %% Callback Functions
     
     function selectFile()
@@ -235,18 +296,25 @@ function PatLogGUI()
         if isequal(file, 0)
             return;
         end
-        
-        currentFile = fullfile(path, file);
-        fileLabel.Text = sprintf('File: %s', file);
+        loadFile(fullfile(path, file));
+    end
+    
+    % Import logic, separated from the file dialog so that it can also be
+    % driven directly by PatLogGUI(filePath) and by the test suite.
+    function loadFile(filePath)
+        [~, baseName, baseExt] = fileparts(filePath);
+        currentFile = filePath;
+        fileLabel.Text = sprintf('File: %s', [baseName baseExt]);
         statusLabel.Text = 'Loading file...';
         statusLabel.FontColor = [1 0.5 0];
         drawnow;
         
         try
             [~, ~, ext] = fileparts(currentFile);
+            fileEncoding = detectFileEncoding(currentFile);
             
             if strcmpi(ext, '.csv')
-                fid = fopen(currentFile, 'r', 'n', 'UTF-8');
+                fid = fopen(currentFile, 'r', 'n', fileEncoding);
                 
                 if fid == -1
                     error('Could not open CSV file');
@@ -274,7 +342,7 @@ function PatLogGUI()
                     % Create format string for textscan
                     formatSpec = repmat('%q', 1, numCols);
                     
-                    fid = fopen(currentFile, 'r', 'n', 'UTF-8');
+                    fid = fopen(currentFile, 'r', 'n', fileEncoding);
                     dataCell = textscan(fid, formatSpec, 'Delimiter', delimiter, 'ReturnOnError', false);
                     fclose(fid);
                     
