@@ -8,9 +8,11 @@ in the accompanying SoftwareX article, using the data in [`examples/`](examples/
 1. Launch `PatLogGUI` (source: `PatLogGUI/src/PatLogGUI.m`, or the compiled
    executable if you're using a release build).
 2. **Import Patient Data File** → select `examples/PatLog_export.csv`.
-3. **Process Clinical Data**. The status message should report the number
-   of essential columns kept (18) and rows retained after removing
-   calibration/QC/metadata rows.
+3. **Process Clinical Data**. The panel should report `Kept 18 essential
+   columns` and the number of non-essential columns removed (218 for this
+   file). Cleaning selects columns only — no rows are removed at this
+   stage. The status line below then reports the number of rows on display
+   (1907 with **All Patients** selected).
 4. Select **Patient ID** `2026027`, **Blood Gas Parameter** `sO2`, then
    click **Trend Analysis**. This reproduces the cleaned-data view shown in
    the article's Fig. 3.
@@ -34,7 +36,7 @@ tells you where each one comes from so both are independently checkable:
   panel (which always reports the all-pairs figure) — it appears in the
   "Bland-Altman Before" panel title of the exported composite report SVG,
   because `ExportFigureButtonPushed` recomputes the before-stats restricted
-  to the same pairs used for the after-stats (see step 7).
+  to the same pairs used for the after-stats (see step 8).
 
 
 1. Launch `ABL_CDI_Analyzer` (source or compiled executable).
@@ -42,15 +44,31 @@ tells you where each one comes from so both are independently checkable:
 3. **Load CDI Data** → `examples/2026027_cdi.log`.
 4. Set **Patient ID** to `2026027`, **Select Parameter** to `pH`, **Time
    Tolerance** to `5` minutes.
-5. Click **ANALYZE**. The Statistics panel should show approximately:
+5. Tick the **Fit Window** checkbox, then click its **Auto** button. This
+   selects the stable fitting window (`14.04.2026 16:19` to
+   `14.04.2026 21:03`) and restricts the analysis to the 67 window pairs
+   that every figure in this section refers to.
+
+   > **This step is required.** Without it the analysis runs on all 68
+   > pairs and none of the values below reproduce: you get Bias 0.049,
+   > SD 0.096, 95% LoA [-0.139, 0.236], and a different fitted model
+   > (`Raw_CDI = 1.8666*ABL -6.2502`, 68/68 pairs, 62 robust, SD down
+   > 12.8%). The `(window)` wording in the N Pairs label below also only
+   > appears once the Fit Window checkbox is ticked.
+6. Click **ANALYZE**. The Statistics panel should show approximately:
    `N Pairs: 67 (window) / 68 total`, `Bias: 0.047`, `SD: 0.095`,
    `95% LoA: [-0.140, 0.234]` — this is the "before correction" panel
    shown in article Fig. 4 (top), and the all-pairs figures quoted in the
    article's abstract and Fig. 4 text.
-6. Under **CDI Correction**, select **Auto (Best Model)** and click **Apply
+7. Under **CDI Correction**, select **Auto (Best Model)** and click **Apply
    Correction**. The LOO-CV evaluation (across all 7 candidates) should
-   select **Weighted Deming (Linnet, tuned λ)** as the winner. The
-   Correction Report's formula text should read:
+   select **Weighted Deming (Linnet, tuned λ)** as the winner. This is the
+   dataset where the top two candidates fall within the 1% RMSE band that
+   triggers the limits-of-agreement tie-breaker: Weighted Deming scores
+   RMSE 0.0953 against the Hybrid method's 0.0957 — a gap of 0.37% — so
+   the narrower LoA span decides (0.3628 vs 0.3644), confirming Weighted
+   Deming as the winner. The Correction Report's formula text should
+   read:
    ```
    Model: Raw_CDI = 1.7395*ABL -5.3238  [Linnet Weighted Deming λ=0.10]
    Corrected = (Raw_CDI +5.3238) / 1.7395
@@ -61,7 +79,7 @@ tells you where each one comes from so both are independently checkable:
    should show Bias ≈ -0.0002 and SD ≈ 0.0426 (61 kept pairs after MAD
    filtering) — matching the "after correction" panel shown in article
    Fig. 4 (bottom).
-7. Click **Export Figures (SVG)** and open the resulting `*_report.svg`
+8. Click **Export Figures (SVG)** and open the resulting `*_report.svg`
    (the composite shown as article Fig. 5 for the pO2 dataset — see §3 —
    but generated here for pH too). Its **"Bland-Altman Before"** panel
    title reports the pre-correction bias/SD recomputed on the same 61
@@ -72,10 +90,14 @@ tells you where each one comes from so both are independently checkable:
 
 ## 3. Dataset 2026007 (article Fig. 5; small recording)
 
-Repeat step 2 with `examples/2026007_cdi.log` and Patient ID `2026007`,
+Repeat step 3 with `examples/2026007_cdi.log` and Patient ID `2026007`,
 selecting **pO2** as the parameter, to reproduce the N=10 result discussed
-in the article's Impact section (where several correction methods were
-within 1% LOO-CV RMSE of one another). Before correction: Bias=48.460,
+in the article's Impact section. Leave **Fit Window** unticked for this
+dataset: all 10 pairs are used, and no window selection is needed. Unlike
+the pH dataset in §2, the LOO-CV candidates here are widely separated —
+the Hybrid method wins outright with RMSE 218.1773 against 292.9552 for
+the runner-up (Bias Correction), a gap of 34% — so the 1% tie-breaker
+never engages. Before correction: Bias=48.460,
 SD=277.922, 95% LoA=[-496.267, 593.187], r=-0.1088. Auto (Best Model)
 selects **Hybrid (Time-Series + Deming)** (RMSE=218.1773), with winning
 parameters W1=4, τ_rise=τ_fall=7.0 min, Linnet λ=0.25, deployed as
