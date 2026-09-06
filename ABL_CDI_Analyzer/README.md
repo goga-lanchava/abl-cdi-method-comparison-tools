@@ -41,8 +41,12 @@ the continuous signal tracks the reference measurements more closely.
 
 - MATLAB R2025b (developed and tested in this version; compatibility with
   other MATLAB releases has not been verified)
-- No additional toolboxes identified as required by static inspection;
-  please confirm against your MATLAB installation before first use.
+- No additional toolboxes required; core MATLAB only (verified with
+  `matlab.codetools.requiredFilesAndProducts`)
+
+On MATLAB releases older than R2025b this tool may additionally require the
+Statistics and Machine Learning Toolbox, because it calls `prctile`, which
+moved into core MATLAB only in recent releases.
 
 ## Usage
 
