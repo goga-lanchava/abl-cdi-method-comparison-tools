@@ -23,6 +23,9 @@ codegen/
 *.bak
 *.log
 
+# ...but CDI monitor recordings are input data, not temporary files
+!examples/*.log
+
 # Operating-system files
 .DS_Store
 Thumbs.db
