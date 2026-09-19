@@ -30,3 +30,7 @@ codegen/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# MATLAB Compiler build output (installers are attached to the release)
+build/output/
+

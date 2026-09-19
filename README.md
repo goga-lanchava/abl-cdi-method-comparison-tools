@@ -24,9 +24,12 @@ On MATLAB releases older than R2025b, `ABL_CDI_Analyzer` may also require
 the Statistics and Machine Learning Toolbox: it calls `prctile`, which
 moved into core MATLAB only in recent releases.
 
-Compiled standalone Windows executables (no
-MATLAB license is needed to run them) are published under the
-[v1.1.0 release](../../releases/tag/v1.1.0).
+Standalone Windows installers are published under the
+[v1.1.0 release](../../releases/tag/v1.1.0). No MATLAB license is needed to
+run the applications. These are MATLAB Compiler *web installers*: each is a
+few megabytes and downloads the matching MATLAB Runtime (~1.2 GB, shared
+between the two tools) during a one-time installation, so internet access is
+required the first time you install.
 
 ## Reproducing the article's results
 

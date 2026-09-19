@@ -1,0 +1,28 @@
+PatLogGUI and ABL-CDI Analyzer - v1.1.0
+Standalone Windows installers
+
+CONTENTS
+  ABL_CDI_Analyzer_Installer.exe   Method comparison and correction
+  PatLogGUI_Installer.exe          Blood gas data exploration
+
+These are MATLAB Compiler *web installers*. Each is only a few megabytes
+because it downloads the matching MATLAB Runtime during a one-time
+installation step, so an internet connection is required the first time you
+install. No MATLAB licence is needed to run either application.
+
+The MATLAB Runtime download is roughly 1.2 GB and is shared between the two
+applications, so installing the second one after the first is quick.
+PatLogGUI additionally installs the Statistics and Machine Learning Toolbox
+Runtime component, which its Statistical Analysis module needs.
+
+REQUIREMENTS
+  Windows 10 or 11, 64-bit
+  Internet access for the one-time MATLAB Runtime download
+  Administrator rights to install
+
+USAGE
+  Run either installer and follow the prompts. Source code, example data and
+  a step-by-step walkthrough that reproduces the published analyses are at
+  https://github.com/goga-lanchava/abl-cdi-method-comparison-tools
+
+Built from release v1.1.0 with MATLAB R2025b.
