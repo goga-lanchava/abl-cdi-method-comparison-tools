@@ -113,4 +113,27 @@ function build_installers(which_app, outRoot)
             fprintf('  runtime products: %s\n', strtrim(fileread(rp)));
         end
     end
+
+    if strcmp(which_app, 'both')
+        packageRelease(here, outRoot);
+    end
+end
+
+function packageRelease(here, outRoot)
+%PACKAGERELEASE Collect the two installers into the release asset.
+    zipPath = fullfile(outRoot, 'Executables.zip');
+    staging = fullfile(outRoot, 'staging');
+    if exist(staging, 'dir'); rmdir(staging, 's'); end
+    mkdir(staging);
+
+    copyfile(fullfile(outRoot,'installer_analyzer','ABL_CDI_Analyzer_Installer.exe'), staging);
+    copyfile(fullfile(outRoot,'installer_patlog','PatLogGUI_Installer.exe'), staging);
+    copyfile(fullfile(here,'INSTALL.txt'), staging);
+
+    if isfile(zipPath); delete(zipPath); end
+    zip(zipPath, '*', staging);
+    rmdir(staging, 's');
+
+    d = dir(zipPath);
+    fprintf('\n=== release asset ===\n  %s  (%.2f MB)\n', d.name, d.bytes/1048576);
 end
