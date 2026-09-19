@@ -26,7 +26,7 @@ moved into core MATLAB only in recent releases.
 
 Compiled standalone Windows executables (no
 MATLAB license is needed to run them) are published under the
-[Executables release](../../releases/tag/v1).
+[v1.1.0 release](../../releases/tag/v1.1.0).
 
 ## Reproducing the article's results
 

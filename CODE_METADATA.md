@@ -3,7 +3,7 @@
 
 | Nr. | Code metadata description | Metadata |
 |---|---|---|
-| C1 | Current code version | v1 |
+| C1 | Current code version | v1.1.0 |
 | C2 | Permanent link to code/repository used for this code version | `https://github.com/goga-lanchava/abl-cdi-method-comparison-tools` |
 | C3 | Legal code license | MIT License |
 | C4 | Code versioning system used | git |
