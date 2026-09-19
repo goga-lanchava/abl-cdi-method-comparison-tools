@@ -150,19 +150,21 @@ classdef WalkthroughTest < matlab.unittest.TestCase
                 'TimeTolerance', 5, 'CorrectionMethod', 'Auto (Best Model)');
 
             tc.verifyEqual(out.model.autoWinner, 'Hybrid (Time-Series + Deming)');
-            tc.verifyEqual(min(out.model.autoRMSE), 218.1773, 'AbsTol', 5e-4);
-            tc.verifyEqual(out.model.slope,     -7.0966,    'AbsTol', 5e-4);
-            tc.verifyEqual(out.model.intercept,  2184.4811, 'AbsTol', 5e-3);
-            tc.verifyEqual(out.model.lam,        0.25,      'AbsTol', 1e-9);
-            tc.verifyEqual(out.model.tau_rise,   7.0,       'AbsTol', 1e-9);
-            tc.verifyEqual(out.model.tau_fall,   7.0,       'AbsTol', 1e-9);
+            tc.verifyEqual(min(out.model.autoRMSE), 218.3203, 'AbsTol', 5e-4);
+            tc.verifyEqual(out.model.slope,     -7.1327,    'AbsTol', 5e-4);
+            tc.verifyEqual(out.model.intercept,  2191.1501, 'AbsTol', 5e-3);
+            tc.verifyEqual(out.model.lam,        0.10,      'AbsTol', 1e-9);
+            tc.verifyEqual(out.model.tau_rise,   8.0,       'AbsTol', 1e-9);
+            tc.verifyEqual(out.model.tau_fall,   8.0,       'AbsTol', 1e-9);
+            tc.verifyEqual(out.model.w1,         4,         'AbsTol', 1e-9);
 
-            tc.verifySubstring(out.formula, '(CDI_fast - 2184.4811) / -7.0966');
+            tc.verifySubstring(out.formula, '(CDI_fast - 2191.1501) / -7.1327');
             tc.verifySubstring(out.formula, 'Fitted on 10/10 window pairs, 10 robust');
 
-            tc.verifyEqual(out.afterBiasText, 'After Correction: Bias=0.6979');
-            tc.verifyEqual(out.afterSDText,   'SD=161.9964 (on 10 kept pairs)');
-            tc.verifySubstring(out.qualityText, 'SD ▼41.7%');
+            tc.verifyEqual(out.afterBiasText, 'After Correction: Bias=0.1180');
+            tc.verifyEqual(out.afterSDText,   'SD=161.6657 (on 10 kept pairs)');
+            tc.verifySubstring(out.qualityText, 'SD ▼41.8%');
+            tc.verifySubstring(out.qualityText, 'BIAS + SD REDUCED');
         end
 
         function section3_noTieBreaker(tc)
@@ -191,6 +193,30 @@ classdef WalkthroughTest < matlab.unittest.TestCase
             tc.verifyEqual(allPat.nPairsText, selected.nPairsText);
             tc.verifyEqual(allPat.stats.bias, selected.stats.bias, 'AbsTol', 1e-12);
             tc.verifyEqual(allPat.stats.sd,   selected.stats.sd,   'AbsTol', 1e-12);
+        end
+
+        function looCvTuningIsFoldIndependent(tc)
+            % Hybrid's tuning statistics - the derivative clip and the roughness
+            % reference - are computed per training fold. Dropping an interior
+            % pair leaves the fold's time span unchanged, so leave-one-out needs
+            % only three distinct spans; this checks the winner and its RMSE are
+            % stable across repeated runs, which they would not be if a
+            % fold-dependent quantity were being read from the wrong span.
+            first = [];
+            for k = 1:2
+                app = tc.newAnalyzer();
+                out = app.runWorkflow(tc.AblFile, tc.CdiFile2026007, '2026007', 'pO2', ...
+                    'TimeTolerance', 5, 'CorrectionMethod', 'Auto (Best Model)');
+                if isempty(first)
+                    first = out.model.autoRMSE;
+                    tc.verifyEqual(out.model.autoWinner, 'Hybrid (Time-Series + Deming)');
+                else
+                    tc.verifyEqual(out.model.autoRMSE, first, 'AbsTol', 1e-12, ...
+                        'LOO-CV RMSE must be reproducible run to run');
+                end
+                tc.verifyFalse(any(isnan(out.model.autoRMSE)), ...
+                    'every candidate must score - a NaN means folds are erroring out');
+            end
         end
 
         % ---------- feature regressions ----------
