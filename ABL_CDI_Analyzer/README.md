@@ -19,8 +19,9 @@ the continuous signal tracks the reference measurements more closely.
 - Nearest-neighbour time alignment with MAD-based outlier filtering and
   optional auto time-shift detection for clock offset correction
 - Seven correction methods (Bias, OLS, Proportional, Deming (error-variance
-  ratio λ, default λ=1, user-configurable), a Weighted Deming fit using the
-  iterative Linnet algorithm (error-variance ratio λ tuned by grid search),
+  ratio λ = σ²(CDI)/σ²(ABL), default λ=1, user-configurable), a Weighted
+  Deming fit using the iterative Linnet algorithm (same λ, tuned by grid
+  search),
   a simplified Passing–Bablok fit (median pairwise-slope regression; does
   not include the confidence-interval or linearity-test procedures of the
   full standard method), and a Hybrid Time-Series+Deming method with
@@ -34,8 +35,11 @@ the continuous signal tracks the reference measurements more closely.
   visualizations
 - Export of corrected data, figures (SVG), and LaTeX-formatted correction
   formulas
-- Before/after summary uses a neutral, software-defined descriptive label
-  (e.g. "Bias + SD improved") rather than a clinical-sounding verdict
+- Before/after summary uses a neutral, purely descriptive label — one of
+  `BIAS + SD REDUCED`, `BIAS REDUCED`, `SD REDUCED` or `NO REDUCTION`,
+  decided only by comparing the before and after values on the same
+  MAD-retained pairs. No absolute or percentage threshold is applied, and
+  the label is not a statement of clinical acceptability
 
 ## Requirements
 

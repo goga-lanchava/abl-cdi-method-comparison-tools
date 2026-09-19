@@ -65,8 +65,8 @@ tells you where each one comes from so both are independently checkable:
    select **Weighted Deming (Linnet, tuned λ)** as the winner. This is the
    dataset where the top two candidates fall within the 1% RMSE band that
    triggers the limits-of-agreement tie-breaker: Weighted Deming scores
-   RMSE 0.0953 against the Hybrid method's 0.0957 — a gap of 0.37% — so
-   the narrower LoA span decides (0.3628 vs 0.3644), confirming Weighted
+   RMSE 0.0953 against the Hybrid method's 0.0957 — a gap of 0.42% — so
+   the narrower LoA span decides (0.3628 vs 0.3646), confirming Weighted
    Deming as the winner. The Correction Report's formula text should
    read:
    ```
@@ -95,17 +95,17 @@ selecting **pO2** as the parameter, to reproduce the N=10 result discussed
 in the article's Impact section. Leave **Fit Window** unticked for this
 dataset: all 10 pairs are used, and no window selection is needed. Unlike
 the pH dataset in §2, the LOO-CV candidates here are widely separated —
-the Hybrid method wins outright with RMSE 218.1773 against 292.9552 for
-the runner-up (Bias Correction), a gap of 34% — so the 1% tie-breaker
+the Hybrid method wins outright with RMSE 218.3203 against 292.9552 for
+the runner-up (Bias Correction), a gap of 34.2% — so the 1% tie-breaker
 never engages. Before correction: Bias=48.460,
 SD=277.922, 95% LoA=[-496.267, 593.187], r=-0.1088. Auto (Best Model)
-selects **Hybrid (Time-Series + Deming)** (RMSE=218.1773), with winning
-parameters W1=4, τ_rise=τ_fall=7.0 min, Linnet λ=0.25, deployed as
-`CDI_corrected = (CDI_fast - 2184.4811) / -7.0966`. Corrected statistics:
-Bias=0.6979, SD=161.9964, giving the software's own displayed "SD ▼41.7%,
-LoA ▼41.7%" reduction (reported as ~42% in the article, on unrounded
+selects **Hybrid (Time-Series + Deming)** (RMSE=218.3203), with winning
+parameters W1=4, τ_rise=τ_fall=8.0 min, Linnet λ=0.10, deployed as
+`CDI_corrected = (CDI_fast - 2191.1501) / -7.1327`. Corrected statistics:
+Bias=0.1180, SD=161.6657, giving the software's own displayed "SD ▼41.8%,
+LoA ▼41.8%" reduction (reported as ~42% in the article, on unrounded
 values) and narrowing the 95% limits of agreement to approximately
-[-316.8, 318.2]. The Correction Report's formula text should confirm all
+[-316.7, 317.0]. The Correction Report's formula text should confirm all
 10 of 10 pairs are retained after MAD-based filtering (no exclusions) —
 so, unlike the pH example in §2, the before/after SD comparison for pO2
 uses the same N=10 pairs throughout without needing the retained-pairs

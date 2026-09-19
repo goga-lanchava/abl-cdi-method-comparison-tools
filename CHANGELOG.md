@@ -2,6 +2,85 @@
 
 ## Unreleased
 
+### Changed - leave-one-out cross-validation is now fully fold-independent
+
+Hybrid's hyperparameters (W1, τ, λ) were already tuned inside each training
+fold, and the MAD mask was already recomputed from the training pairs only.
+Three further quantities were not:
+
+- the 95th-percentile derivative clip was computed once over the **whole** CDI
+  recording and baked into the filtered traces every fold was scored on;
+- the raw roughness reference and the per-candidate roughness used in the
+  Hybrid tuning penalty were computed once over the **whole** fitting window;
+- the window those roughness statistics were taken over was bounded by the
+  minimum and maximum of **all** paired times, including the held-out pair.
+
+All three are now derived from the training pairs of the fold that uses them.
+`computeAsymmetricFastCDI` takes an optional mask restricting which samples
+define the clip threshold, and the Auto path precomputes one set of traces and
+roughness statistics per distinct training span. Dropping an interior pair does
+not move the span, so leave-one-out needs only three spans (interior,
+earliest-dropped, latest-dropped) and the cost stays close to the previous
+single precompute.
+
+The held-out observation no longer influences parameter selection in any way.
+Note that the clip threshold remains a within-span statistic rather than a
+running causal one: it never uses the held-out pair, but it is not computed
+strictly from samples preceding each time point.
+
+Effect on the documented examples:
+
+- **pH / 2026027** - selected model, deployed coefficients and all reported
+  before/after statistics are unchanged. Hybrid's LOO-CV RMSE rose slightly
+  (0.095654 to 0.095699), so the gap to the winner widened from 0.37% to
+  0.42%; it stays inside the 1% band, the limits-of-agreement tie-breaker
+  still engages, and Weighted Deming still wins.
+- **pO2 / 2026007** - Hybrid still wins but retunes: RMSE 218.1773 to
+  218.3203, τ_rise = τ_fall 7.0 to 8.0 min, λ 0.25 to 0.10, deployed fit
+  `(CDI_fast - 2191.1501) / -7.1327`. After-correction bias 0.6979 to 0.1180,
+  SD 161.9964 to 161.6657, SD reduction 41.7% to 41.8%, 95% LoA now
+  [-316.7, 317.0]. W1 = 4 and 10/10 MAD-retained pairs are unchanged.
+
+RMSE rising slightly in both cases is the expected direction: the previous
+figures were mildly optimistic.
+
+### Changed - Deming λ is documented consistently as σ²(CDI)/σ²(ABL)
+
+`fitWeightedDeming` implements the standard Deming form with x = ABL and
+y = CDI, in which λ is the ratio of the y-error to the x-error variance - that
+is, σ²(CDI)/σ²(ABL), matching the manuscript. The GUI label read
+"Variance Ratio ABL/CDI", the inverse. The label, the function comment and the
+Correction Report wording now all state λ = σ²(CDI)/σ²(ABL). λ = 1 remains
+orthogonal regression. No numerical behaviour changed.
+
+### Changed - correction quality verdict is purely descriptive
+
+The verdict applied a fixed +/-5% band to the SD reduction and reported
+"IMPROVED" / "WORSENED" / "NO IMPROVEMENT" with pass-fail marks. It now
+compares the before and after values directly on the same MAD-retained pairs
+and reports one of `BIAS + SD REDUCED`, `BIAS REDUCED`, `SD REDUCED` or
+`NO REDUCTION`, in a neutral colour. No threshold is applied, since the
+parameters differ in unit and scale, and the label makes no claim about
+clinical acceptability. The SD and LoA percentages are still shown alongside.
+
+### Added
+
+- `tests/ComponentTest.m`: ten deterministic component tests covering ABL and
+  CDI parsing of the known example files, rejection of malformed timestamps,
+  tolerance of a missing patient-ID column, skipping of malformed CDI lines,
+  temporal pairing at two tolerances, MAD filtering on artificial data
+  (including the zero-MAD degenerate case), and a Bias Correction whose offset
+  and corrected series are checked against an independently computed value.
+- `WalkthroughTest/looCvTuningIsFoldIndependent`, which also fails if any
+  candidate scores NaN.
+- Public `readABL`, `readCDI` and `madRetainMask` wrappers so the parsers and
+  the robust filter can be driven headlessly.
+- The deployed Hybrid smoothing window (`w1`) and the candidate
+  limits-of-agreement spans (`autoLoASpan`) are now recorded on the
+  correction model, so the tie-breaker can be inspected and tested.
+
+---
+
 Fixes from an independent reproduction check of `WALKTHROUGH.md` against the
 shipped code and example data.
 
@@ -12,7 +91,7 @@ shipped code and example data.
   SD 0.096, and a different fitted model). Steps renumbered accordingly.
 - `WALKTHROUGH.md` §3: the "several correction methods within 1% LOO-CV
   RMSE of one another" observation applies to the pH dataset in §2 (top two
-  candidates 0.37% apart, tie-breaker engages), not to the pO2 dataset in
+  candidates 0.42% apart, tie-breaker engages), not to the pO2 dataset in
   §3 (34% apart). Moved to §2 and replaced with the actual §3 ranking.
   Also corrected a cross-reference ("repeat step 2" → step 3) and noted
   that §3 needs no fitting window.
