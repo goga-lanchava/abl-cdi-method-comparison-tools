@@ -122,6 +122,9 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
 
         % --- WEIGHTED DEMING REGRESSION (LINNET ALGORITHM) ---
         % Iteratively computes weighted Deming regression where weight w_i = 1 / u_hat_i^2.
+        % lambda is the error-variance ratio sigma^2(y)/sigma^2(x). Callers pass
+        % x = ABL and y = CDI, so lambda = sigma^2(CDI)/sigma^2(ABL); lambda = 1
+        % gives orthogonal regression.
         function [slope, intercept] = fitWeightedDeming(~, x, y, lambda)
             if nargin < 4 || isempty(lambda), lambda = 1.0; end
             n = numel(x);
@@ -176,7 +179,11 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
         end
 
         % --- CAUSAL DYNAMIC RESPONSE FILTER ---
-        function cdi_fast = computeAsymmetricFastCDI(~, fullCDIVals, fullCDITime, w1, tau_rise, tau_fall)
+        % dlimMask (optional) restricts which samples define the 95th-percentile
+        % derivative clip. Leave-one-out tuning passes the training-fold span so the
+        % threshold is never learned from data the fold is being scored on; callers
+        % that omit it keep the previous whole-recording behaviour.
+        function cdi_fast = computeAsymmetricFastCDI(~, fullCDIVals, fullCDITime, w1, tau_rise, tau_fall, dlimMask)
             w_sm = max(0, w1 - 1);
             smoothed = movmean(fullCDIVals, [w_sm 0], 'omitnan');
             if tau_rise == 0 && tau_fall == 0
@@ -191,7 +198,11 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                     deriv = [0; dy ./ dt];
                     deriv = movmean(deriv, [w_sm 0], 'omitnan');
                 end
-                validD = deriv(~isnan(deriv) & ~isinf(deriv));
+                dSel = ~isnan(deriv) & ~isinf(deriv);
+                if nargin >= 7 && ~isempty(dlimMask)
+                    dSel = dSel & logical(dlimMask(:));
+                end
+                validD = deriv(dSel);
                 if ~isempty(validD)
                     dlim = prctile(abs(validD), 95);
                     if dlim == 0 || isnan(dlim), dlim = 10; end
@@ -2025,49 +2036,77 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                     searchTimes  = fullCDITime(validCDIMask);
                     fitTimes     = pairedTimes(fitWinMask);
 
+                    % --- Fold-local CDI spans -------------------------------------
+                    % Every quantity that tunes Hybrid - the derivative clip, the raw
+                    % roughness reference and the roughness of each candidate trace -
+                    % is a statistic of the CDI stream taken over the span of the
+                    % paired observations. Taken once over the whole fitting window it
+                    % would be partly derived from the held-out pair, so each is
+                    % recomputed from the training pairs of the fold that uses it.
+                    % Dropping an interior pair does not move the span, so leave-one-out
+                    % has at most three distinct spans: interior, earliest-dropped and
+                    % latest-dropped.
                     if numel(fitTimes) >= 2
-                        winStartH = min(fitTimes);
-                        winEndH   = max(fitTimes);
-                        winMaskCDIH = searchTimes >= winStartH & searchTimes <= winEndH;
+                        [~, iMinT] = min(fitTimes);
+                        [~, iMaxT] = max(fitTimes);
+                        spanList = [min(fitTimes), max(fitTimes)];
+                        foldSpan = ones(n, 1);
+                        if n >= 3
+                            tEarly = fitTimes; tEarly(iMinT) = [];
+                            spanList(2, :) = [min(tEarly), max(tEarly)];
+                            tLate  = fitTimes; tLate(iMaxT)  = [];
+                            spanList(3, :) = [min(tLate),  max(tLate)];
+                            foldSpan(iMinT) = 2;
+                            foldSpan(iMaxT) = 3;
+                        end
                     else
-                        winMaskCDIH = true(size(searchTimes));
+                        spanList = [min(searchTimes), max(searchTimes)];
+                        foldSpan = ones(n, 1);
                     end
+                    nSpan = size(spanList, 1);
 
-                    % Pre-compute fast dynamic CDI traces across candidate grids to accelerate LOO folds
-                    nTau = numel(tau_grid); 
+                    nTau = numel(tau_grid);
                     nW1  = numel(w1_grid);
-                    fastPairedFit = zeros(n, nTau, nW1);
-                    fastRoughnessWin = zeros(nTau, nW1);
+                    fastPairedFit    = zeros(nSpan, n, nTau, nW1);
+                    fastRoughnessWin = zeros(nSpan, nTau, nW1);
+                    rawRoughSpan     = ones(nSpan, 1);
+                    spanMaskCDI      = cell(nSpan, 1);
 
-                    for wi = 1:nW1
-                        w1v = w1_grid(wi);
-                        for ti = 1:nTau
-                            tv = tau_grid(ti);
-                            cdi_fast_full = computeAsymmetricFastCDI(app, fullCDIVals, fullCDITime, w1v, tv, tv);
-                            sv = cdi_fast_full(validCDIMask);
-                            
-                            for k = 1:n
-                                [~, bi] = min(abs(searchTimes - fitTimes(k)));
-                                fastPairedFit(k, ti, wi) = sv(bi);
-                            end
-                            
-                            sv_win = sv(winMaskCDIH);
-                            rv = sv_win(~isnan(sv_win));
-                            if numel(rv) > 2
-                                fastRoughnessWin(ti, wi) = std(diff(rv), 'omitnan');
-                            else
-                                fastRoughnessWin(ti, wi) = 1.0;
+                    for si = 1:nSpan
+                        spanMaskCDI{si} = fullCDITime >= spanList(si,1) & fullCDITime <= spanList(si,2);
+                        sMaskSearch     = searchTimes  >= spanList(si,1) & searchTimes  <= spanList(si,2);
+
+                        rawInSpan = fullCDIVals(spanMaskCDI{si});
+                        rawInSpan = rawInSpan(~isnan(rawInSpan));
+                        if numel(rawInSpan) > 2
+                            rr = std(diff(rawInSpan), 'omitnan');
+                            if rr == 0 || isnan(rr), rr = 1.0; end
+                        else
+                            rr = 1.0;
+                        end
+                        rawRoughSpan(si) = rr;
+
+                        for wi = 1:nW1
+                            w1v = w1_grid(wi);
+                            for ti = 1:nTau
+                                tv = tau_grid(ti);
+                                cdi_fast_full = computeAsymmetricFastCDI(app, fullCDIVals, fullCDITime, w1v, tv, tv, spanMaskCDI{si});
+                                sv = cdi_fast_full(validCDIMask);
+
+                                for k = 1:n
+                                    [~, bi] = min(abs(searchTimes - fitTimes(k)));
+                                    fastPairedFit(si, k, ti, wi) = sv(bi);
+                                end
+
+                                sv_win = sv(sMaskSearch);
+                                rv = sv_win(~isnan(sv_win));
+                                if numel(rv) > 2
+                                    fastRoughnessWin(si, ti, wi) = std(diff(rv), 'omitnan');
+                                else
+                                    fastRoughnessWin(si, ti, wi) = 1.0;
+                                end
                             end
                         end
-                    end
-
-                    raw_valid_h = fullCDIVals(validCDIMask);
-                    raw_valid_h_win = raw_valid_h(winMaskCDIH);
-                    if numel(raw_valid_h_win) > 2
-                        raw_rough = std(diff(raw_valid_h_win), 'omitnan');
-                        if raw_rough == 0 || isnan(raw_rough), raw_rough = 1.0; end
-                    else
-                        raw_rough = 1.0;
                     end
 
                     % =========================================================================
@@ -2163,6 +2202,8 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                                         end
 
                                     case 7 % Hybrid Method (Tuned tau, W1, lambda strictly inside training fold)
+                                        sIdx = foldSpan(i);
+                                        raw_rough_f = rawRoughSpan(sIdx);
                                         best_tau_fold = 0;
                                         best_w1_fold  = 8;
                                         best_lam_hfold = 1.0;
@@ -2170,7 +2211,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
 
                                         for wi = 1:nW1
                                             for ti = 1:nTau
-                                                fp_tr = fastPairedFit(leaveIdx, ti, wi);
+                                                fp_tr = reshape(fastPairedFit(sIdx, leaveIdx, ti, wi), [], 1);
                                                 cMaskH_tr = robustCleanMask(app, xTr, fp_tr);
                                                 xTrH = xTr(cMaskH_tr);
                                                 yTrH = fp_tr(cMaskH_tr);
@@ -2182,9 +2223,9 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                                                     yh_h = (yTrH - ic_h) / sl_h;
                                                     rmseH = sqrt(mean((yh_h - xTrH).^2, 'omitnan'));
 
-                                                    corr_rough = fastRoughnessWin(ti, wi) / max(abs(sl_h), 1e-4);
-                                                    if isnan(corr_rough), corr_rough = raw_rough; end
-                                                    roughness_ratio = corr_rough / raw_rough;
+                                                    corr_rough = fastRoughnessWin(sIdx, ti, wi) / max(abs(sl_h), 1e-4);
+                                                    if isnan(corr_rough), corr_rough = raw_rough_f; end
+                                                    roughness_ratio = corr_rough / raw_rough_f;
                                                     pen = max(0, roughness_ratio - 1.0) * 0.25 * rmseH;
 
                                                     if rmseH + pen < best_rmse_hfold
@@ -2203,8 +2244,8 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                                         if isempty(ti_fold), ti_fold = 1; end
                                         if isempty(wi_fold), wi_fold = 2; end
 
-                                        yFastTr = fastPairedFit(leaveIdx, ti_fold, wi_fold);
-                                        yFastTe = fastPairedFit(i, ti_fold, wi_fold);
+                                        yFastTr = reshape(fastPairedFit(sIdx, leaveIdx, ti_fold, wi_fold), [], 1);
+                                        yFastTe = fastPairedFit(sIdx, i, ti_fold, wi_fold);
                                         cMaskH_f = robustCleanMask(app, xTr, yFastTr);
                                         [sl_hf, ic_hf] = fitWeightedDeming(app, xTr(cMaskH_f), yFastTr(cMaskH_f), best_lam_hfold);
                                         pred = (yFastTe - ic_hf) / sl_hf;
@@ -2346,7 +2387,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                             best_tau_dep = 0; best_w1_dep = 8; best_lam_dep = 1.0; best_rmse_dep = inf;
                             for wi = 1:nW1
                                 for ti = 1:nTau
-                                    fp_fit = fastPairedFit(:, ti, wi);
+                                    fp_fit = reshape(fastPairedFit(1, :, ti, wi), [], 1);
                                     cMaskH = robustCleanMask(app, xABL_fit, fp_fit);
                                     xCleanH = xABL_fit(cMaskH);
                                     yCleanH = fp_fit(cMaskH);
@@ -2357,9 +2398,9 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                                         [sl_h, ic_h] = fitWeightedDeming(app, xCleanH, yCleanH, lv);
                                         yh_h = (yCleanH - ic_h) / sl_h;
                                         rmseH = sqrt(mean((yh_h - xCleanH).^2, 'omitnan'));
-                                        corr_rough = fastRoughnessWin(ti, wi) / max(abs(sl_h), 1e-4);
-                                        if isnan(corr_rough), corr_rough = raw_rough; end
-                                        roughness_ratio = corr_rough / raw_rough;
+                                        corr_rough = fastRoughnessWin(1, ti, wi) / max(abs(sl_h), 1e-4);
+                                        if isnan(corr_rough), corr_rough = rawRoughSpan(1); end
+                                        roughness_ratio = corr_rough / rawRoughSpan(1);
                                         pen = max(0, roughness_ratio - 1.0) * 0.25 * rmseH;
                                         if rmseH + pen < best_rmse_dep
                                             best_rmse_dep = rmseH + pen;
@@ -2371,7 +2412,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                                 end
                             end
 
-                            cdi_fast_fit = computeAsymmetricFastCDI(app, fullCDIVals, fullCDITime, best_w1_dep, best_tau_dep, best_tau_dep);
+                            cdi_fast_fit = computeAsymmetricFastCDI(app, fullCDIVals, fullCDITime, best_w1_dep, best_tau_dep, best_tau_dep, spanMaskCDI{1});
                             searchVals   = cdi_fast_fit(validCDIMask);
                             cdi_fast_paired = zeros(size(xABL));
                             for k = 1:numel(xABL)
@@ -2388,6 +2429,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                             yCorrected(~cMaskH) = NaN;
 
                             app.CorrectionModel.type = 'hybrid';
+                            app.CorrectionModel.w1 = best_w1_dep;
                             app.CorrectionModel.tau_rise = best_tau_dep; 
                             app.CorrectionModel.tau_fall = best_tau_dep;
                             app.CorrectionModel.lam = best_lam_dep; 
@@ -2416,6 +2458,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                     app.CorrectionModel.smallNWarning = smallNWarning;
                     app.CorrectionModel.autoRankText  = rankText;
                     app.CorrectionModel.autoRMSE      = candidateRMSE;
+                    app.CorrectionModel.autoLoASpan   = candidateLoASpan;
                     app.CorrectionModel.autoCandidates= candidateNames;
 
                 otherwise
@@ -2464,21 +2507,23 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             sdReduction  = 100 * (1 - sdNew    / max(sdBefore_clean,  1e-10));
             loaReduction = 100 * (1 - loaAfter / max(loaBefore_clean, 1e-10));
 
-            biasImproved = abs(biasNew) < abs(biasBefore_clean) - 1e-6;
-            sdImproved   = sdReduction > 5;
-            sdWorsened   = sdReduction < -5;
+            % Purely descriptive comparison of the before and after values on the
+            % same MAD-retained pairs. No absolute or percentage threshold is used,
+            % because the parameters differ in unit and scale (pH, pO2, K+, ...),
+            % and the label is not a statement of clinical acceptability.
+            biasReduced = abs(biasNew) < abs(biasBefore_clean);
+            sdReduced   = sdNew < sdBefore_clean;
 
-            if sdWorsened
-                verdict = '✗ SD WORSENED';  vColor = [0.8 0.1 0.1];
-            elseif biasImproved && sdImproved
-                verdict = '✓ BIAS + SD IMPROVED';  vColor = [0.1 0.6 0.1];
-            elseif biasImproved
-                verdict = '~ BIAS ONLY';  vColor = [0.7 0.5 0.0];
-            elseif sdImproved
-                verdict = '~ SD ONLY';  vColor = [0.7 0.5 0.0];
+            if biasReduced && sdReduced
+                verdict = 'BIAS + SD REDUCED';
+            elseif biasReduced
+                verdict = 'BIAS REDUCED';
+            elseif sdReduced
+                verdict = 'SD REDUCED';
             else
-                verdict = '✗ NO IMPROVEMENT';  vColor = [0.8 0.1 0.1];
+                verdict = 'NO REDUCTION';
             end
+            vColor = [0.25 0.28 0.32];
 
             sdArrow  = '▼'; if sdReduction  < 0, sdArrow  = '▲'; end
             loaArrow = '▼'; if loaReduction < 0, loaArrow = '▲'; end
@@ -2780,9 +2825,9 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                 case 'hybrid'
                     w1_val = app.SmoothW1Spinner.Value;
                     w_sm = max(0, w1_val - 1);
-                    howTo = sprintf('THE CONCEPT:\nDynamic response filtering + Linnet Weighted Deming regression.\nHybrid filtering is causal: current output uses current and prior CDI samples only.\n\nSTEP 1 - PRE-SMOOTHING (W1-1=%d):\nCDI_s = movmean(CDI_raw, [%d 0])\n\nSTEP 2 - DERIVATIVE LEAD:\nCDI_fast = CDI_s + tau * (dCDI_s/dt)\n\nSTEP 3 - LINNET WEIGHTED DEMING:\nFitted with lambda=%.2f using 1/u^2 variance weighting.\nCDI_corrected = (CDI_fast - %.4f) / %.4f', w_sm, w_sm, mdl.lam, mdl.intercept, mdl.slope);
+                    howTo = sprintf('THE CONCEPT:\nDynamic response filtering + Linnet Weighted Deming regression.\nHybrid filtering is causal: current output uses current and prior CDI samples only.\n\nSTEP 1 - PRE-SMOOTHING (W1-1=%d):\nCDI_s = movmean(CDI_raw, [%d 0])\n\nSTEP 2 - DERIVATIVE LEAD:\nCDI_fast = CDI_s + tau * (dCDI_s/dt)\n\nSTEP 3 - LINNET WEIGHTED DEMING:\nFitted with lambda=%.2f = sigma^2(CDI)/sigma^2(ABL),\nusing 1/u^2 variance weighting.\nCDI_corrected = (CDI_fast - %.4f) / %.4f', w_sm, w_sm, mdl.lam, mdl.intercept, mdl.slope);
                 case 'weighted_deming'
-                    howTo = sprintf('THE ALGEBRA:\nModel: Raw_CDI = (%.4f * ABL) %+.4f\nCorrected = (Raw_CDI %+.4f) / %.4f\n\nHOW IT WAS CALCULATED:\n- Linnet Weighted Deming Regression.\n- Weights w_i = 1 / u_hat_i^2 account for proportional error variance.\n- Lambda = %.2f variance ratio.', mdl.slope, mdl.intercept, -mdl.intercept, mdl.slope, mdl.lam);
+                    howTo = sprintf('THE ALGEBRA:\nModel: Raw_CDI = (%.4f * ABL) %+.4f\nCorrected = (Raw_CDI %+.4f) / %.4f\n\nHOW IT WAS CALCULATED:\n- Linnet Weighted Deming Regression.\n- Weights w_i = 1 / u_hat_i^2 account for proportional error variance.\n- Lambda = %.2f = sigma^2(CDI)/sigma^2(ABL).', mdl.slope, mdl.intercept, -mdl.intercept, mdl.slope, mdl.lam);
                 case 'bias'
                     if mdl.bias > 0
                         howTo = sprintf('THE ALGEBRA:\nModel: Raw_CDI = ABL + %.4f\nCorrected = Raw_CDI - %.4f\n\nHOW IT WAS CALCULATED:\n- Constant offset shift based on robust median difference.', mdl.bias, mdl.bias);
@@ -3360,7 +3405,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
 
             app.DemingLambdaLabel = uilabel(app.CorrectionGrid);
             app.DemingLambdaLabel.Layout.Row = 3;
-            app.DemingLambdaLabel.Text = 'Deming λ (Variance Ratio ABL/CDI):';
+            app.DemingLambdaLabel.Text = 'Deming λ = σ²(CDI)/σ²(ABL):';
             app.DemingLambdaLabel.FontSize = 9;
 
             app.DemingLambdaEditField = uieditfield(app.CorrectionGrid, 'numeric');
@@ -3618,6 +3663,21 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                 end
                 written = {[baseName ext]};
             end
+        end
+
+        % Thin public wrappers so the parsers and the robust filter can be driven
+        % headlessly - for batch processing and for the test suite - without
+        % going through the file dialogs.
+        function [tbl, patientIDs] = readABL(app, fullpath)
+            [tbl, patientIDs] = parseABL(app, char(fullpath));
+        end
+
+        function tbl = readCDI(app, fullpath)
+            tbl = parseCDI(app, char(fullpath));
+        end
+
+        function mask = madRetainMask(app, ablValues, cdiValues)
+            mask = robustCleanMask(app, ablValues(:), cdiValues(:));
         end
 
         % Scripted equivalent of the WALKTHROUGH.md workflow: loads both
