@@ -10,10 +10,21 @@ because it downloads the matching MATLAB Runtime during a one-time
 installation step, so an internet connection is required the first time you
 install. No MATLAB licence is needed to run either application.
 
-The MATLAB Runtime download is roughly 1.2 GB and is shared between the two
-applications, so installing the second one after the first is quick.
+The MATLAB Runtime download is roughly 1.2 GB and needs about 2.2 GB once
+installed. It is shared between the two applications, so installing the
+second one after the first is quick.
 PatLogGUI additionally installs the Statistics and Machine Learning Toolbox
 Runtime component, which its Statistical Analysis module needs.
+
+FIRST-RUN SECURITY WARNING
+
+These installers are not code-signed, so Windows SmartScreen will show
+"Windows protected your PC" the first time you run one. This is expected.
+To continue, click "More info" and then "Run anyway".
+
+Some antivirus products also flag self-extracting installers on first sight.
+If you would rather verify the download independently, the SHA-256 checksums
+are published alongside the release on GitHub.
 
 REQUIREMENTS
   Windows 10 or 11, 64-bit
