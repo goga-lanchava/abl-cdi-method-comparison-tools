@@ -57,7 +57,8 @@ tells you where each one comes from so both are independently checkable:
    > appears once the Fit Window checkbox is ticked.
 6. Click **ANALYZE**. The Statistics panel should show approximately:
    `N Pairs: 67 (window) / 68 total`, `Bias: 0.047`, `SD: 0.095`,
-   `95% LoA: [-0.140, 0.234]` — this is the "before correction" panel
+   `95% LoA: [-0.140, 0.234]`, `r = 0.1700` — this is the "before
+   correction" panel
    shown in article Fig. 4 (top), and the all-pairs figures quoted in the
    article's abstract and Fig. 4 text.
 7. Under **CDI Correction**, select **Auto (Best Model)** and click **Apply
@@ -78,7 +79,9 @@ tells you where each one comes from so both are independently checkable:
    retained-pair count quoted in the article. The corrected statistics
    should show Bias ≈ -0.0002 and SD ≈ 0.0426 (61 kept pairs after MAD
    filtering) — matching the "after correction" panel shown in article
-   Fig. 4 (bottom).
+   Fig. 4 (bottom). With **Show corrected scatter** ticked, the correlation
+   panel title becomes `After Correction (r=0.471)`, against `r=0.170`
+   before correction.
 8. Click **Export Figures (SVG)** and open the resulting `*_report.svg`
    (the composite shown as article Fig. 5 for the pO2 dataset — see §3 —
    but generated here for pH too). Its **"Bland-Altman Before"** panel
@@ -102,7 +105,10 @@ SD=277.922, 95% LoA=[-496.267, 593.187], r=-0.1088. Auto (Best Model)
 selects **Hybrid (Time-Series + Deming)** (RMSE=218.3203), with winning
 parameters W1=4, τ_rise=τ_fall=8.0 min, Linnet λ=0.10, deployed as
 `CDI_corrected = (CDI_fast - 2191.1501) / -7.1327`. Corrected statistics:
-Bias=0.1180, SD=161.6657, giving the software's own displayed "SD ▼41.8%,
+Bias=0.1180, SD=161.6657, and a correlation against the ABL draws that
+turns from r=-0.109 before correction to r=0.201 after it (the
+`Correlation Before` and `Correlation After` panels of the composite
+export), giving the software's own displayed "SD ▼41.8%,
 LoA ▼41.8%" reduction (reported as ~42% in the article, on unrounded
 values) and narrowing the 95% limits of agreement to approximately
 [-316.7, 317.0]. The Correction Report's formula text should confirm all

@@ -83,6 +83,7 @@ classdef WalkthroughTest < matlab.unittest.TestCase
             tc.verifyEqual(out.biasText,   'Bias: 0.047');
             tc.verifyEqual(out.sdText,     'SD: 0.095');
             tc.verifyEqual(out.loaText,    '95% LoA: [-0.140, 0.234]');
+            tc.verifyEqual(out.rText,      'r = 0.1700');
         end
 
         function section2_fitWindowIsRequired(tc)
@@ -113,6 +114,7 @@ classdef WalkthroughTest < matlab.unittest.TestCase
 
             tc.verifyEqual(out.afterBiasText, 'After Correction: Bias=-0.0002');
             tc.verifyEqual(out.afterSDText,   'SD=0.0426 (on 61 kept pairs)');
+            tc.verifyEqual(out.model.r_new,   0.4711, 'AbsTol', 5e-4);
         end
 
         function section2_tieBreakerEngages(tc)
@@ -163,6 +165,7 @@ classdef WalkthroughTest < matlab.unittest.TestCase
 
             tc.verifyEqual(out.afterBiasText, 'After Correction: Bias=0.1180');
             tc.verifyEqual(out.afterSDText,   'SD=161.6657 (on 10 kept pairs)');
+            tc.verifyEqual(out.model.r_new,   0.2005, 'AbsTol', 5e-4);
             tc.verifySubstring(out.qualityText, 'SD ▼41.8%');
             tc.verifySubstring(out.qualityText, 'BIAS + SD REDUCED');
         end
