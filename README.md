@@ -39,17 +39,46 @@ statistics reported in the accompanying SoftwareX article.
 
 ## Tests
 
-`tests/WalkthroughTest.m` asserts the exact statistics quoted in
-[WALKTHROUGH.md](WALKTHROUGH.md) against the data in `examples/`, so the
-software and the article cannot drift apart unnoticed. From the repository
-root:
+Open this folder in MATLAB and run:
 
 ```matlab
 runtests('tests')
 ```
 
-The suite drives both applications through their real callbacks — no GUI
-interaction is needed — and also checks the declared toolbox dependencies.
+That is the whole setup — the tests put the source folders on the path
+themselves. Expect 23 passing tests in roughly three to four minutes.
+
+Two suites:
+
+- **`tests/ComponentTest.m`** — ten deterministic component tests: parsing of
+  the known ABL and CDI example files, rejection of malformed timestamps,
+  tolerance of a missing patient-ID column, skipping of malformed CDI log
+  lines, temporal pairing at two tolerances, MAD filtering on hand-checkable
+  artificial data (including the degenerate zero-MAD case), and a Bias
+  Correction whose fitted offset and corrected series are checked against a
+  value the test recomputes independently.
+- **`tests/WalkthroughTest.m`** — asserts the exact statistics quoted in
+  [WALKTHROUGH.md](WALKTHROUGH.md) against the data in `examples/`, so the
+  software and the article cannot drift apart unnoticed. It also covers the
+  export fix, the import encoding, and the declared toolbox dependencies.
+
+To run one suite or one test:
+
+```matlab
+runtests('tests/ComponentTest.m')
+runtests('tests/WalkthroughTest.m', 'ProcedureName', 'section2_autoCorrection')
+```
+
+Notes for anyone reproducing the results:
+
+- The expected values are those of MATLAB R2025b. Other releases have not
+  been verified, and small numerical differences would show up here first.
+- Application windows open and close during the run. That is normal, and no
+  interaction is needed — the tests drive the real callbacks directly.
+- `toolboxDependenciesMatchDocumentation` asserts that `PatLogGUI` requires
+  the Statistics and Machine Learning Toolbox and that `ABL_CDI_Analyzer`
+  does not. Without that toolbox installed this test is expected to fail,
+  which is itself the correct signal about the environment.
 
 ## Repository structure
 
