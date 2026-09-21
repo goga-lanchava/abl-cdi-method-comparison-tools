@@ -48,6 +48,10 @@ runtests('tests')
 That is the whole setup — the tests put the source folders on the path
 themselves. Expect 23 passing tests in roughly three to four minutes.
 
+**[TESTING.md](TESTING.md) gives a step-by-step guide**, including what the
+output looks like, how to read a failure, and a table of what each test
+checks.
+
 Two suites:
 
 - **`tests/ComponentTest.m`** — ten deterministic component tests: parsing of
@@ -93,6 +97,7 @@ Notes for anyone reproducing the results:
 ├── examples/            # sample/illustrative ABL + CDI data
 ├── tests/               # regression tests for the WALKTHROUGH.md figures
 ├── WALKTHROUGH.md       # reproduces the article's reported figures/statistics
+├── TESTING.md           # step-by-step guide to running the test suite
 ├── CHANGELOG.md
 ├── CODE_METADATA.md     # SoftwareX submission metadata table (both tools)
 ├── LICENSE
