@@ -2,8 +2,9 @@
 
 ## Unreleased
 
-Changes on `main` since v1.1.0. None of them alters any result quoted in
-`WALKTHROUGH.md` or the article.
+Changes on `main` since v1.1.0. None of them alters any statistic quoted in
+`WALKTHROUGH.md` or the article; the Hybrid display fix below does slightly
+change the drawn trace in article Fig. 5.
 
 ### Fixed
 
@@ -16,8 +17,15 @@ Changes on `main` since v1.1.0. None of them alters any result quoted in
   display path reuses it, so the series drawn is exactly the one the reported
   bias and SD describe. Manual Hybrid fits keep the whole-recording threshold
   they are fitted with, and a manual fit no longer inherits a mask left over
-  from a previous Auto run. On both example recordings the two thresholds
-  already agreed at every paired sample, so no published value changes.
+  from a previous Auto run.
+
+  No published statistic changes: the two thresholds produce identical values
+  at every paired sample, so bias, SD, limits of agreement, correlation and
+  LOO-CV RMSE are all unchanged. The drawn corrected trace of the pO2 example
+  does change slightly between the paired samples — 419 of 5,814 samples,
+  by at most 8.4 mmHg and 0.45 mmHg on average — so its time-series panel
+  (article Fig. 5) no longer matches this code exactly and should be
+  regenerated from it.
 
 ### Documentation
 
