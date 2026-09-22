@@ -1872,6 +1872,9 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             yCDI_fit = yCDI(fitWinMask);
 
             app.CorrectionModel.autoSelected = false;
+            if isfield(app.CorrectionModel, 'dlimMask')
+                app.CorrectionModel = rmfield(app.CorrectionModel, 'dlimMask');
+            end
             app.CorrectionModel.fitWindowUsed = app.FitWindowCheckBox.Value;
             app.CorrectionModel.nFitPairs = numel(xABL_fit);
             yCorrected = []; 
@@ -2430,6 +2433,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
 
                             app.CorrectionModel.type = 'hybrid';
                             app.CorrectionModel.w1 = best_w1_dep;
+                            app.CorrectionModel.dlimMask = spanMaskCDI{1};
                             app.CorrectionModel.tau_rise = best_tau_dep; 
                             app.CorrectionModel.tau_fall = best_tau_dep;
                             app.CorrectionModel.lam = best_lam_dep; 
@@ -2542,8 +2546,17 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                 origVals = app.CDI_Corrected_Table.(param);
                 switch app.CorrectionModel.type
                     case 'hybrid'
+                        % Reuse the clip mask the deployed coefficients were fitted with,
+                        % so the plotted and exported series is the one the reported
+                        % statistics describe. Manual Hybrid fits leave it empty and
+                        % keep the whole-recording threshold they were fitted with.
+                        dlimMask = [];
+                        if isfield(app.CorrectionModel, 'dlimMask')
+                            dlimMask = app.CorrectionModel.dlimMask;
+                        end
                         cdi_fast = computeAsymmetricFastCDI(app, origVals, app.CDI_Corrected_Table.Time, ...
-                            app.SmoothW1Spinner.Value, app.CorrectionModel.tau_rise, app.CorrectionModel.tau_fall);
+                            app.SmoothW1Spinner.Value, app.CorrectionModel.tau_rise, app.CorrectionModel.tau_fall, ...
+                            dlimMask);
                         if abs(app.CorrectionModel.slope) > 1e-10
                             full_corr = (cdi_fast - app.CorrectionModel.intercept) / app.CorrectionModel.slope;
                         else
