@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+Changes on `main` since v1.1.0. None of them alters any result quoted in
+`WALKTHROUGH.md` or the article.
+
+### Fixed
+
+- The plotted and exported corrected series for an Auto-selected Hybrid model
+  is now computed with the same derivative-clip threshold as the deployed
+  coefficients. The fit used the threshold of the fitting-window span, while
+  the full corrected series shown in the time-series panel, the composite
+  figure and **Export Corrected** was recomputed with the whole-recording
+  threshold. The deployed model now records the mask it was fitted with and the
+  display path reuses it, so the series drawn is exactly the one the reported
+  bias and SD describe. Manual Hybrid fits keep the whole-recording threshold
+  they are fitted with, and a manual fit no longer inherits a mask left over
+  from a previous Auto run. On both example recordings the two thresholds
+  already agreed at every paired sample, so no published value changes.
+
+### Documentation
+
+- `TESTING.md`: a step-by-step guide to running the test suite, including
+  what the output looks like, how to read a failure, and a table of what each
+  of the 23 tests checks.
+- `WALKTHROUGH.md` now states the expected correlation values before and
+  after correction, which the figures show but nothing previously let a reader
+  check. They are asserted in `WalkthroughTest`.
+- README: a fuller Tests section pointing to `TESTING.md`.
+
+## v1.1.0 — 2026-09-19
+
 ### Changed - leave-one-out cross-validation is now fully fold-independent
 
 Hybrid's hyperparameters (W1, τ, λ) were already tuned inside each training
