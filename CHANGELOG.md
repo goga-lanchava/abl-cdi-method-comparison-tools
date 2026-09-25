@@ -3,8 +3,7 @@
 ## Unreleased
 
 Changes on `main` since v1.1.0. None of them alters any statistic quoted in
-`WALKTHROUGH.md` or the article. The article figures are generated from this
-code.
+`WALKTHROUGH.md`.
 
 ### Fixed
 
@@ -19,12 +18,11 @@ code.
   they are fitted with, and a manual fit no longer inherits a mask left over
   from a previous Auto run.
 
-  No published statistic changes: the two thresholds produce identical values
+  No reported statistic changes: the two thresholds produce identical values
   at every paired sample, so bias, SD, limits of agreement, correlation and
   LOO-CV RMSE are all unchanged. Only the drawn corrected trace of the pO2
   example shifts slightly between the paired samples (419 of 5,814 samples,
-  by at most 8.4 mmHg and 0.45 mmHg on average); article Fig. 5 was
-  regenerated from this version.
+  by at most 8.4 mmHg and 0.45 mmHg on average).
 
 ### Documentation
 
@@ -98,14 +96,15 @@ Effect on the documented examples:
   SD 161.9964 to 161.6657, SD reduction 41.7% to 41.8%, 95% LoA now
   [-316.7, 317.0]. W1 = 4 and 10/10 MAD-retained pairs are unchanged.
 
-RMSE rising slightly in both cases is the expected direction: the previous
-figures were mildly optimistic.
+RMSE rises slightly in both cases, as expected: the previous values were
+computed with tuning quantities that included the held-out observation, which
+made them slightly lower.
 
 ### Changed - Deming λ is documented consistently as σ²(CDI)/σ²(ABL)
 
 `fitWeightedDeming` implements the standard Deming form with x = ABL and
 y = CDI, in which λ is the ratio of the y-error to the x-error variance - that
-is, σ²(CDI)/σ²(ABL), matching the manuscript. The GUI label read
+is, σ²(CDI)/σ²(ABL). The GUI label read
 "Variance Ratio ABL/CDI", the inverse. The label, the function comment and the
 Correction Report wording now all state λ = σ²(CDI)/σ²(ABL). λ = 1 remains
 orthogonal regression. No numerical behaviour changed.
@@ -138,8 +137,8 @@ clinical acceptability. The SD and LoA percentages are still shown alongside.
 
 ---
 
-Fixes from an independent reproduction check of `WALKTHROUGH.md` against the
-shipped code and example data.
+Corrections to `WALKTHROUGH.md`, found by re-running it against the shipped
+code and example data.
 
 ### Documentation
 - `WALKTHROUGH.md` §2: added the missing **Fit Window → Auto** step. Every
@@ -218,8 +217,7 @@ shipped code and example data.
   re-optimized by grid search strictly on each fold's N-1 training
   partition, rather than reusing the value optimized on the full dataset.
   This can shift the exact LOO-CV RMSE values, the winning candidate,
-  and/or the tie-breaker outcome relative to earlier results — re-run
-  `WALKTHROUGH.md` against this version before citing specific numbers.
+  and/or the tie-breaker outcome relative to earlier versions.
 - Corrected-series output: all seven correction methods now consistently
   set MAD-filtered outlier points to `NaN` in the exported/plotted
   corrected series (previously only Passing–Bablok did this); before/after
@@ -233,8 +231,8 @@ shipped code and example data.
   formula used a literal Unicode character instead of the `\tau` command
 - `WALKTHROUGH.md` §2 updated to distinguish the all-pairs pre-correction
   SD (0.095, 67/68 pairs) from the MAD-retained-pairs-only SD comparison
-  (0.047 → 0.043, 61/67 pairs) the article now quotes, including where in
-  the software's output each figure is found
+  (0.047 → 0.043, 61/67 pairs), including where in the software's output
+  each figure is found
 
 ## PatLogGUI v1
 - Automatic delimiter (semicolon/comma) and decimal-comma handling for CSV

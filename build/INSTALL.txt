@@ -33,7 +33,7 @@ REQUIREMENTS
 
 USAGE
   Run either installer and follow the prompts. Source code, example data and
-  a step-by-step walkthrough that reproduces the published analyses are at
+  a step-by-step walkthrough that reproduces the example analyses are at
   https://github.com/goga-lanchava/abl-cdi-method-comparison-tools
 
 Built from release v1.1.0 with MATLAB R2025b.
