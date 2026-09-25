@@ -37,8 +37,9 @@ from the parsing logic in `src/ABL_CDI_Analyzer.m` (`parseABL`,
 - A parameter column is only kept in the parsed table if at least one row
   has a non-missing value for it
 
-## Notes for the SoftwareX illustrative example
+## Example files
 
-For the manuscript's illustrative example, use a small, de-identified or
-synthetic sample of each file type (a handful of patients/timepoints is
-sufficient) — see `examples/`.
+[`examples/`](../../examples/) contains one file of each type: a complete
+ABL Flex 800 export (`PatLog_export.csv`, 1,907 measurements) and two
+Terumo CDI 500 logs. See [`examples/README.md`](../../examples/README.md)
+for what they contain.

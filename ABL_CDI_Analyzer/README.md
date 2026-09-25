@@ -16,8 +16,10 @@ the continuous signal tracks the reference measurements more closely.
 ## Features
 
 - ABL export CSV parser and CDI monitor log parser
-- Nearest-neighbour time alignment with MAD-based outlier filtering and
-  optional auto time-shift detection for clock offset correction
+- Nearest-neighbour time alignment with MAD-based outlier filtering, and an
+  optional AutoShift search that estimates the temporal offset between the
+  two streams by maximising their correlation (an estimate from the paired
+  data, not a measured instrument clock offset)
 - Seven correction methods (Bias, OLS, Proportional, Deming (error-variance
   ratio λ = σ²(CDI)/σ²(ABL), default λ=1, user-configurable), a Weighted
   Deming fit using the iterative Linnet algorithm (same λ, tuned by grid
@@ -25,9 +27,11 @@ the continuous signal tracks the reference measurements more closely.
   a simplified Passing–Bablok fit (median pairwise-slope regression; does
   not include the confidence-interval or linearity-test procedures of the
   full standard method), and a Hybrid Time-Series+Deming method with
-  independently Auto-Tuned rise/fall time constants (τ_rise, τ_fall)) plus
-  Auto (nested Leave-One-Out Cross-Validation) model selection across all
-  seven candidates, with the narrower Bland–Altman limits-of-agreement span
+  separate rise/fall time constants (τ_rise, τ_fall; both automatic paths
+  tune a single shared value, τ_rise = τ_fall, while manual mode accepts
+  different values)) plus Auto (Leave-One-Out Cross-Validation, with the
+  hyperparameters of each fold tuned on that fold's training pairs only)
+  model selection across all seven candidates, with the narrower Bland–Altman limits-of-agreement span
   used as a tie-breaker when the top two candidates' RMSE differ by less
   than 1%
 - Fitting-window controls with a stability score

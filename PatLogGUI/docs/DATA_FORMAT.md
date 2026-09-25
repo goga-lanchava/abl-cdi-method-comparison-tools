@@ -36,6 +36,8 @@ many were removed.
 
 ## Notes
 
-- Delimiter/decimal-notation handling is performed by MATLAB's import
-  functions when reading the CSV/Excel file; no manual configuration is
-  required by the user.
+- For CSV files, PatLogGUI detects the delimiter itself: it counts
+  semicolons and commas in the header line and reads the file with the more
+  frequent one. Decimal commas are converted to decimal points when values
+  are read as numbers. Excel files are read with MATLAB's `readcell`. No
+  manual configuration is required by the user.

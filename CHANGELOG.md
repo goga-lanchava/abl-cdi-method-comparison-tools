@@ -28,6 +28,19 @@ code.
 
 ### Documentation
 
+- Descriptions corrected to match the software: τ_rise and τ_fall share one
+  tuned value in both automatic paths; AutoShift estimates a temporal offset
+  from the data rather than correcting a known clock offset; Auto model
+  selection is single-level LOO-CV with in-fold tuning, not nested
+  cross-validation; PatLogGUI detects the CSV delimiter itself; PatLogGUI
+  cleaning selects columns and removes no rows.
+- `examples/README.md`: the reproduction steps now include the required
+  **Fit Window → Auto** step for Dataset 2026027, and the description of the
+  example export states what its fields actually contain.
+- `WALKTHROUGH.md`: added the limits of agreement on the retained pairs,
+  exact values where approximate ones were given, and an explicit tolerance;
+  corrected cross-references and the description of the exported
+  Bland–Altman panels.
 - `TESTING.md`: a step-by-step guide to running the test suite, including
   what the output looks like, how to read a failure, and a table of what each
   of the 23 tests checks.
@@ -35,6 +48,14 @@ code.
   after correction, which the figures show but nothing previously let a reader
   check. They are asserted in `WalkthroughTest`.
 - README: a fuller Tests section pointing to `TESTING.md`.
+
+### Tests
+
+- `WalkthroughTest` now asserts every value quoted in `WALKTHROUGH.md`,
+  including the retained-pair statistics and limits of agreement, the LOO-CV
+  RMSE values and LoA spans behind the tie-breaker, the values obtained
+  without the fitting window, and PatLogGUI's column and row counts. The
+  number of tests is unchanged (23).
 
 ## v1.1.0 — 2026-09-19
 
@@ -179,11 +200,13 @@ shipped code and example data.
   search) as a 7th correction method and Auto/LOO-CV candidate
 - Hybrid correction method: Time-Series + Deming with AutoTune grid search,
   MAD-based outlier filtering, and 95th-percentile derivative cap; the
-  smoothing time constant was split into independently Auto-Tuned rise/fall
-  parameters (τ_rise, τ_fall) rather than a single symmetric τ
+  smoothing time constant was split into separate rise/fall parameters
+  (τ_rise, τ_fall), which can be set independently in manual mode; AutoTune
+  and Auto (LOO-CV) tune a single shared value (τ_rise = τ_fall)
 - Auto (Leave-One-Out Cross-Validation) model selection across 7 candidate
   correction methods
-- TimeShift / AutoShift for instrument clock offset alignment
+- TimeShift / AutoShift: manual or correlation-estimated temporal offset
+  between the ABL and CDI streams
 - CorrView / BAView toggles; 4-panel Before/After comparison popup
 - Pin correction; LaTeX export of the fitted correction formula
 - Small-N warning label; continuous CDI line plot
@@ -214,8 +237,9 @@ shipped code and example data.
   the software's output each figure is found
 
 ## PatLogGUI v1
-- Automatic delimiter/decimal-notation detection for CSV/Excel imports
-- Two-stage cleaning (essential-column selection, patient-ID row validation)
+- Automatic delimiter (semicolon/comma) and decimal-comma handling for CSV
+  imports; Excel files read directly
+- Cleaning by essential-column selection
 - Three-dimensional filtering (patient, catheter location, time point)
 - Trend Analysis, Multi-Parameter View, Location Comparison visualizations
 - Statistical Analysis module with descriptive statistics and boxplots

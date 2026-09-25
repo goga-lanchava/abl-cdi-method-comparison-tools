@@ -67,6 +67,20 @@ classdef WalkthroughTest < matlab.unittest.TestCase
             tc.assertNotEmpty(hit, sprintf('No label containing "%s"', needle));
             txt = char(hit(1).Text);
         end
+
+        function s = keptPairStats(tc, out)
+            % Before/after agreement on the MAD-retained pairs, computed the
+            % way Export Figures does for its Bland-Altman panels.
+            x = out.stats.xABL; yRaw = out.stats.yCDI; yCor = out.model.yCorrected;
+            tc.assertEqual(numel(yCor), numel(x), 'Corrected series and pairs differ in length');
+            keep = ~isnan(yCor) & ~isnan(x);
+            dB = yRaw(keep) - x(keep); dA = yCor(keep) - x(keep);
+            s.n = nnz(keep);
+            s.biasBefore = mean(dB); s.sdBefore = std(dB);
+            s.biasAfter  = mean(dA); s.sdAfter  = std(dA);
+            s.loaBefore = sprintf('[%.3f, %.3f]', s.biasBefore - 1.96*s.sdBefore, s.biasBefore + 1.96*s.sdBefore);
+            s.loaAfter  = sprintf('[%.3f, %.3f]', s.biasAfter  - 1.96*s.sdAfter,  s.biasAfter  + 1.96*s.sdAfter);
+        end
     end
 
     methods (Test)
@@ -84,6 +98,8 @@ classdef WalkthroughTest < matlab.unittest.TestCase
             tc.verifyEqual(out.sdText,     'SD: 0.095');
             tc.verifyEqual(out.loaText,    '95% LoA: [-0.140, 0.234]');
             tc.verifyEqual(out.rText,      'r = 0.1700');
+            tc.verifyEqual(app.FitWindowStartEdit.Value, '14.04.2026 16:19');
+            tc.verifyEqual(app.FitWindowEndEdit.Value,   '14.04.2026 21:03');
         end
 
         function section2_fitWindowIsRequired(tc)
@@ -92,10 +108,19 @@ classdef WalkthroughTest < matlab.unittest.TestCase
             % never told to expect values the default settings cannot give.
             app = tc.newAnalyzer();
             out = app.runWorkflow(tc.AblFile, tc.CdiFile2026027, '2026027', 'pH', ...
-                'TimeTolerance', 5, 'FitWindowAuto', false);
+                'TimeTolerance', 5, 'FitWindowAuto', false, ...
+                'CorrectionMethod', 'Auto (Best Model)');
 
             tc.verifyEqual(out.nPairsText, 'N Pairs: 68');
             tc.verifyNotEqual(out.biasText, 'Bias: 0.047');
+            % ...and the values WALKTHROUGH.md says you get instead
+            tc.verifyEqual(out.biasText, 'Bias: 0.049');
+            tc.verifyEqual(out.sdText,   'SD: 0.096');
+            tc.verifyEqual(out.loaText,  '95% LoA: [-0.139, 0.236]');
+            tc.verifySubstring(out.formula, '1.8666*ABL -6.2502');
+            tc.verifySubstring(out.formula, '68/68');
+            tc.verifySubstring(out.formula, '62 robust');
+            tc.verifySubstring(out.qualityText, 'SD ▼12.8%');
         end
 
         function section2_autoCorrection(tc)
@@ -115,6 +140,16 @@ classdef WalkthroughTest < matlab.unittest.TestCase
             tc.verifyEqual(out.afterBiasText, 'After Correction: Bias=-0.0002');
             tc.verifyEqual(out.afterSDText,   'SD=0.0426 (on 61 kept pairs)');
             tc.verifyEqual(out.model.r_new,   0.4711, 'AbsTol', 5e-4);
+
+            % Same 61 retained pairs before and after (Export Figures panels)
+            s = tc.keptPairStats(out);
+            tc.verifyEqual(s.n, 61);
+            tc.verifyEqual(sprintf('%.4f', s.biasBefore), '0.0729');
+            tc.verifyEqual(sprintf('%.4f', s.sdBefore),   '0.0475');
+            tc.verifyEqual(s.loaBefore, '[-0.020, 0.166]');
+            tc.verifyEqual(s.loaAfter,  '[-0.084, 0.083]');
+            tc.verifySubstring(out.qualityText, 'BIAS + SD REDUCED');
+            tc.verifySubstring(out.qualityText, 'SD ▼10.3%');
         end
 
         function section2_tieBreakerEngages(tc)
@@ -130,6 +165,13 @@ classdef WalkthroughTest < matlab.unittest.TestCase
             gapPct = 100 * (sorted(2) - sorted(1)) / sorted(1);
             tc.verifyLessThan(gapPct, 1, ...
                 'Expected the top two candidates within 1% RMSE for pH/2026027');
+
+            [~, order] = sort(out.model.autoRMSE);
+            tc.verifyEqual(sprintf('%.4f', sorted(1)), '0.0953');
+            tc.verifyEqual(sprintf('%.4f', sorted(2)), '0.0957');
+            tc.verifyEqual(sprintf('%.2f', gapPct),    '0.42');
+            tc.verifyEqual(sprintf('%.4f', out.model.autoLoASpan(order(1))), '0.3628');
+            tc.verifyEqual(sprintf('%.4f', out.model.autoLoASpan(order(2))), '0.3646');
         end
 
         % ---------- WALKTHROUGH.md section 3: pO2, dataset 2026007 ----------
@@ -168,6 +210,10 @@ classdef WalkthroughTest < matlab.unittest.TestCase
             tc.verifyEqual(out.model.r_new,   0.2005, 'AbsTol', 5e-4);
             tc.verifySubstring(out.qualityText, 'SD ▼41.8%');
             tc.verifySubstring(out.qualityText, 'BIAS + SD REDUCED');
+
+            s = tc.keptPairStats(out);
+            tc.verifyEqual(s.n, 10);
+            tc.verifyEqual(s.loaAfter, '[-316.747, 316.983]');
         end
 
         function section3_noTieBreaker(tc)
@@ -181,6 +227,8 @@ classdef WalkthroughTest < matlab.unittest.TestCase
             gapPct = 100 * (sorted(2) - sorted(1)) / sorted(1);
             tc.verifyGreaterThan(gapPct, 1, ...
                 'Expected the top two candidates further than 1% apart for pO2/2026007');
+            tc.verifyEqual(sprintf('%.4f', sorted(2)), '292.9552');
+            tc.verifyEqual(sprintf('%.1f', gapPct),    '34.2');
         end
 
         function section3_allPatientsGivesSameResult(tc)
@@ -251,6 +299,9 @@ classdef WalkthroughTest < matlab.unittest.TestCase
             tc.pushButton(fig, 'Process Clinical Data');
             info = tc.labelContaining(fig, 'essential columns');
             tc.verifySubstring(info, 'Kept 18 essential columns');
+            tc.verifySubstring(info, 'Removed 218 unnecessary columns');
+            % cleaning selects columns only: every data row is still shown
+            tc.verifySubstring(tc.labelContaining(fig, 'Displaying'), 'Displaying 1907 rows');
         end
 
         function patLogReadsLatin1Encoding(tc)
