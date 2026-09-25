@@ -3,8 +3,8 @@
 ## Unreleased
 
 Changes on `main` since v1.1.0. None of them alters any statistic quoted in
-`WALKTHROUGH.md` or the article; the Hybrid display fix below does slightly
-change the drawn trace in article Fig. 5.
+`WALKTHROUGH.md` or the article. The article figures are generated from this
+code.
 
 ### Fixed
 
@@ -21,11 +21,10 @@ change the drawn trace in article Fig. 5.
 
   No published statistic changes: the two thresholds produce identical values
   at every paired sample, so bias, SD, limits of agreement, correlation and
-  LOO-CV RMSE are all unchanged. The drawn corrected trace of the pO2 example
-  does change slightly between the paired samples — 419 of 5,814 samples,
-  by at most 8.4 mmHg and 0.45 mmHg on average — so its time-series panel
-  (article Fig. 5) no longer matches this code exactly and should be
-  regenerated from it.
+  LOO-CV RMSE are all unchanged. Only the drawn corrected trace of the pO2
+  example shifts slightly between the paired samples (419 of 5,814 samples,
+  by at most 8.4 mmHg and 0.45 mmHg on average); article Fig. 5 was
+  regenerated from this version.
 
 ### Documentation
 
