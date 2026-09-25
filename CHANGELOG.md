@@ -137,53 +137,43 @@ clinical acceptability. The SD and LoA percentages are still shown alongside.
 
 ---
 
-Corrections to `WALKTHROUGH.md`, found by re-running it against the shipped
-code and example data.
+Documentation, fixes and tests, checked against the shipped code and example
+data.
 
 ### Documentation
-- `WALKTHROUGH.md` §2: added the missing **Fit Window → Auto** step. Every
-  statistic quoted in §2 depends on it, and following the previous steps
-  literally produced none of them (68 pairs instead of 67, Bias 0.049,
-  SD 0.096, and a different fitted model). Steps renumbered accordingly.
-- `WALKTHROUGH.md` §3: the "several correction methods within 1% LOO-CV
-  RMSE of one another" observation applies to the pH dataset in §2 (top two
-  candidates 0.42% apart, tie-breaker engages), not to the pO2 dataset in
-  §3 (34% apart). Moved to §2 and replaced with the actual §3 ranking.
-  Also corrected a cross-reference ("repeat step 2" → step 3) and noted
-  that §3 needs no fitting window.
-- `WALKTHROUGH.md` §1 and PatLogGUI README: cleaning selects columns only.
-  The previously documented removal of calibration/QC/metadata rows and the
-  "row validation (patient-ID presence, plausible temperature range)" stage
-  were never implemented; the description now matches the behaviour.
-- Toolbox requirements corrected: `PatLogGUI` requires the Statistics and
-  Machine Learning Toolbox (`boxplot`, in the Statistical Analysis module).
-  `ABL_CDI_Analyzer` is core MATLAB only. Both were previously documented
-  as core-MATLAB-only in the root README, `CODE_METADATA.md` and the
-  per-tool READMEs. Added a note that on releases older than R2025b the
-  Analyzer may also need it, because `prctile` moved into core only
-  recently.
-- `PatLogGUI` is a programmatic `uifigure` GUI, not an App Designer app;
-  the root README and `CODE_METADATA.md` C5 said otherwise.
+- `WALKTHROUGH.md` §2 includes the **Fit Window → Auto** step, on which
+  every statistic quoted in §2 depends; without it the analysis uses 68
+  pairs instead of 67 and gives Bias 0.049, SD 0.096 and a different fitted
+  model. Steps renumbered accordingly.
+- `WALKTHROUGH.md`: the observation that the top two correction methods lie
+  within 1% LOO-CV RMSE of one another is stated for the pH dataset in §2
+  (0.42% apart; the tie-breaker engages). §3 gives the pO2 ranking (34%
+  apart), refers to step 3, and notes that no fitting window is needed.
+- `WALKTHROUGH.md` §1 and PatLogGUI README: documentation no longer describes
+  a row-removal or row-validation stage; cleaning selects columns only.
+- Toolbox requirements are stated per tool in the root README,
+  `CODE_METADATA.md` and the per-tool READMEs: `PatLogGUI` requires the
+  Statistics and Machine Learning Toolbox (`boxplot`, in the Statistical
+  Analysis module); `ABL_CDI_Analyzer` requires core MATLAB only. A note
+  explains that on releases older than R2025b the Analyzer may also need
+  the toolbox, because `prctile` moved into core MATLAB only recently.
+- The root README and `CODE_METADATA.md` C5 describe `PatLogGUI` as a
+  programmatic `uifigure` GUI rather than an App Designer app.
 
 ### Fixed
-- **Export Results** in ABL-CDI Analyzer never produced a file, in any
-  format: `struct2table(app.Stats)` always threw, because `Stats` mixes
-  scalar statistics with the N-element `xABL`/`yCDI` vectors, and the error
-  was swallowed into an "Export failed" alert. The summary table now holds
-  the scalar fields only, with the paired vectors written alongside. The
-  `.csv` option also passed `'Sheet'` to `writetable`, which CSV does not
-  support; CSV exports are now written as `<name>_statistics.csv` and
-  `<name>_paireddata.csv`.
-- `PatLogGUI` forced UTF-8 when reading imports, but ABL Flex 800 exports
-  are typically Latin-1, so the temperature column displayed as `T (?C)`.
-  The encoding is now detected from the file's bytes.
-- `.gitignore` matched `*.log`, silently ignoring CDI monitor recordings —
-  one of the project's two primary input formats. Example logs are now
-  exempt via `!examples/*.log`.
+- **Export Results** in ABL-CDI Analyzer now writes the `.xlsx` and `.csv`
+  files correctly (previously failed on mixed scalar/vector statistics). The
+  summary table holds the scalar statistics, with the paired `xABL`/`yCDI`
+  values written alongside; CSV exports are written as
+  `<name>_statistics.csv` and `<name>_paireddata.csv`.
+- `PatLogGUI` detects the file encoding from the file's bytes, so Latin-1
+  ABL Flex 800 exports display the temperature column as `T (°C)`.
+- Example CDI logs are no longer excluded by `.gitignore`
+  (`!examples/*.log`).
 
 ### Added
 - `tests/WalkthroughTest.m`: regression tests asserting the exact figures
-  quoted in `WALKTHROUGH.md` §2 and §3, the export fix, the import
+  quoted in `WALKTHROUGH.md` §2 and §3, Export Results, the import
   encoding, and the declared toolbox dependencies. Run with
   `runtests('tests')`.
 - `ABL_CDI_Analyzer.runWorkflow(...)`: scripted equivalent of the

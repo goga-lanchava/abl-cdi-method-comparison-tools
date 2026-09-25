@@ -103,9 +103,7 @@ classdef WalkthroughTest < matlab.unittest.TestCase
         end
 
         function section2_fitWindowIsRequired(tc)
-            % Guards the documentation fix: without the Fit Window step the
-            % walkthrough's figures must NOT appear, so a future reader is
-            % never told to expect values the default settings cannot give.
+            % Without the Fit Window step, the §2 values must not appear.
             app = tc.newAnalyzer();
             out = app.runWorkflow(tc.AblFile, tc.CdiFile2026027, '2026027', 'pH', ...
                 'TimeTolerance', 5, 'FitWindowAuto', false, ...
@@ -273,8 +271,7 @@ classdef WalkthroughTest < matlab.unittest.TestCase
         % ---------- feature regressions ----------
 
         function exportResultsWritesFiles(tc)
-            % Export Results previously always failed: app.Stats mixes scalars
-            % with N-element vectors, which struct2table rejects.
+            % Export Results writes scalar statistics and paired data separately.
             app = tc.newAnalyzer();
             app.runWorkflow(tc.AblFile, tc.CdiFile2026027, '2026027', 'pH', ...
                 'TimeTolerance', 5, 'FitWindowAuto', true);
@@ -306,8 +303,8 @@ classdef WalkthroughTest < matlab.unittest.TestCase
 
         function patLogReadsLatin1Encoding(tc)
             % examples/PatLog_export.csv is ISO-8859-1: the degree sign in the
-            % temperature header is a bare 0xB0. Reading it as UTF-8 turned the
-            % column name into "T (<?>C)".
+            % temperature header is a single 0xB0 byte, and the column name must
+            % read "T (°C)".
             fig = tc.launchPatLog(tc.AblFile);
             tc.pushButton(fig, 'Process Clinical Data');
             info = tc.labelContaining(fig, 'essential columns');
