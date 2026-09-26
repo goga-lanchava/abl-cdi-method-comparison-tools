@@ -1,22 +1,23 @@
 # Changelog
 
-## Unreleased
+## v1.1.0 — 2026-09-19, updated 2026-09-26
 
-Changes on `main` since v1.1.0. None of them alters any statistic quoted in
-`WALKTHROUGH.md`.
+### Update of 2026-09-26
 
-### Fixed
+Changes to the v1.1.0 files since their first publication on 2026-09-19. None
+of them alters any statistic quoted in `WALKTHROUGH.md`.
+
+#### Fixed
 
 - The plotted and exported corrected series for an Auto-selected Hybrid model
-  is now computed with the same derivative-clip threshold as the deployed
-  coefficients. The fit used the threshold of the fitting-window span, while
-  the full corrected series shown in the time-series panel, the composite
-  figure and **Export Corrected** was recomputed with the whole-recording
-  threshold. The deployed model now records the mask it was fitted with and the
-  display path reuses it, so the series drawn is exactly the one the reported
-  bias and SD describe. Manual Hybrid fits keep the whole-recording threshold
-  they are fitted with, and a manual fit no longer inherits a mask left over
-  from a previous Auto run.
+  is computed with the same derivative-clip threshold as the deployed
+  coefficients: the deployed model records the mask it was fitted with, and
+  the time-series panel, the composite figure and **Export Corrected** reuse
+  it, so the series drawn is exactly the one the reported bias and SD
+  describe. (The first upload recomputed the displayed series with the
+  whole-recording threshold.) Manual Hybrid fits keep the whole-recording
+  threshold they are fitted with and do not inherit a mask from a previous
+  Auto run.
 
   No reported statistic changes: the two thresholds produce identical values
   at every paired sample, so bias, SD, limits of agreement, correlation and
@@ -24,38 +25,34 @@ Changes on `main` since v1.1.0. None of them alters any statistic quoted in
   example shifts slightly between the paired samples (419 of 5,814 samples,
   by at most 8.4 mmHg and 0.45 mmHg on average).
 
-### Documentation
+#### Documentation
 
-- Descriptions corrected to match the software: τ_rise and τ_fall share one
-  tuned value in both automatic paths; AutoShift estimates a temporal offset
-  from the data rather than correcting a known clock offset; Auto model
-  selection is single-level LOO-CV with in-fold tuning, not nested
-  cross-validation; PatLogGUI detects the CSV delimiter itself; PatLogGUI
-  cleaning selects columns and removes no rows.
-- `examples/README.md`: the reproduction steps now include the required
-  **Fit Window → Auto** step for Dataset 2026027, and the description of the
-  example export states what its fields actually contain.
-- `WALKTHROUGH.md`: added the limits of agreement on the retained pairs,
-  exact values where approximate ones were given, and an explicit tolerance;
-  corrected cross-references and the description of the exported
+- The ABL-CDI Analyzer README and the data-format notes state that τ_rise and
+  τ_fall share one tuned value in both automatic paths, that AutoShift
+  estimates the temporal offset between the two streams from the paired data,
+  that Auto model selection is single-level LOO-CV with in-fold tuning, and
+  that PatLogGUI detects the CSV delimiter itself and its cleaning removes no
+  rows.
+- `examples/README.md`: the reproduction steps include the **Fit Window →
+  Auto** step for Dataset 2026027, and the description of the example export
+  states what each field contains.
+- `WALKTHROUGH.md` gives the limits of agreement on the retained pairs, exact
+  values throughout, the expected correlation values before and after
+  correction, and an explicit tolerance, and describes the exported
   Bland–Altman panels.
 - `TESTING.md`: a step-by-step guide to running the test suite, including
   what the output looks like, how to read a failure, and a table of what each
   of the 23 tests checks.
-- `WALKTHROUGH.md` now states the expected correlation values before and
-  after correction, which the figures show but nothing previously let a reader
-  check. They are asserted in `WalkthroughTest`.
 - README: a fuller Tests section pointing to `TESTING.md`.
 
-### Tests
+#### Tests
 
-- `WalkthroughTest` now asserts every value quoted in `WALKTHROUGH.md`,
-  including the retained-pair statistics and limits of agreement, the LOO-CV
-  RMSE values and LoA spans behind the tie-breaker, the values obtained
-  without the fitting window, and PatLogGUI's column and row counts. The
-  number of tests is unchanged (23).
+- `WalkthroughTest` asserts every value `WALKTHROUGH.md` says the software
+  reports, including the retained-pair statistics and limits of agreement,
+  the LOO-CV RMSE values and LoA spans behind the tie-breaker, the values
+  obtained without the fitting window, and PatLogGUI's column and row counts.
+  The number of tests is unchanged (23).
 
-## v1.1.0 — 2026-09-19
 
 ### Changed - leave-one-out cross-validation is now fully fold-independent
 
