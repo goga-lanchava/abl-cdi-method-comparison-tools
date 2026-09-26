@@ -1007,7 +1007,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             
             for w1 = w1_cands
                 for tr = tau_cands
-                    tf = tr; % Strict alignment with LOO-CV symmetric rise=fall rule
+                    tf = tr; % tau_fall = tau_rise, as in the Auto (LOO-CV) path
                     cdi_fast_full = computeAsymmetricFastCDI(app, fullCDIVals, fullCDITime, w1, tr, tf);
                     searchVals = cdi_fast_full(validCDIMask);
                     cdi_fast_paired = searchVals(matchIndices);
@@ -2017,9 +2017,8 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                     app.CorrectionModel.formula = sprintf('Model: Raw_CDI = %.4f*ABL %+.4f  [Simplified Passing-Bablok]\nCorrected = (Raw_CDI %+.4f) / %.4f\n(Fitted on %d/%d window pairs, %d robust [|diff - med| <= 4.5*MAD])', slope, intercept, -intercept, slope, numel(xABL_fit), numel(xABL), sum(cleanMask));
 
                 case 'Auto (Best Model)'
-                    app.StatusLabel.Text = 'Auto: running strict out-of-sample LOO-CV (7 candidate models)...'; drawnow;
+                    app.StatusLabel.Text = 'Auto: running LOO-CV over 7 candidate models...'; drawnow;
 
-                    % Corrected literal LaTeX slashes to Unicode so UI doesn't break rendering
                     candidateNames   = {'Bias Correction', ...
                                         'OLS (ABL is X)', ...
                                         'Proportional Correction', ...
@@ -2113,7 +2112,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                     end
 
                     % =========================================================================
-                    % STRICT LEAVE-ONE-OUT CROSS-VALIDATION (Hyperparameter tuning strictly in-fold)
+                    % LEAVE-ONE-OUT CROSS-VALIDATION (hyperparameters tuned on each fold's training pairs)
                     % =========================================================================
                     for ci = 1:7
                         looErrors = nan(n, 1);
@@ -2159,7 +2158,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                                         [sl_d, ic_d] = fitWeightedDeming(app, xTrC, yTrC, 1.0);
                                         pred = (yTe - ic_d) / sl_d;
 
-                                    case 5 % Linnet Weighted Deming (Tuned lambda strictly inside training fold)
+                                    case 5 % Linnet Weighted Deming (lambda tuned on the training pairs)
                                         best_lam_fold = 1.0;
                                         best_rmse_wfold = inf;
                                         if numel(xTrC) >= 3
@@ -2204,7 +2203,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                                             end
                                         end
 
-                                    case 7 % Hybrid Method (Tuned tau, W1, lambda strictly inside training fold)
+                                    case 7 % Hybrid Method (tau, W1, lambda tuned on the training pairs)
                                         sIdx = foldSpan(i);
                                         raw_rough_f = rawRoughSpan(sIdx);
                                         best_tau_fold = 0;
@@ -2994,7 +2993,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                 ag.Padding = [6 4 6 4];
                 
                 autoLines = {};
-                autoLines{end+1} = '   Primary criterion: Fold-wise LOO-CV RMSE (parameters tuned strictly inside folds)';
+                autoLines{end+1} = '   Primary criterion: Fold-wise LOO-CV RMSE (parameters tuned inside each fold)';
                 autoLines{end+1} = '   Final parameters refitted on the complete selected fit-window after ranking.';
                 autoLines{end+1} = '';
                 for ri = 1:numel(mdl.autoRankText)
