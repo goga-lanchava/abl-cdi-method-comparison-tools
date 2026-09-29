@@ -148,12 +148,16 @@ classdef WalkthroughTest < matlab.unittest.TestCase
             tc.verifyEqual(s.loaAfter,  '[-0.084, 0.083]');
             tc.verifySubstring(out.qualityText, 'BIAS + SD REDUCED');
             tc.verifySubstring(out.qualityText, 'SD ▼10.3%');
+
+            % Reference line: mean of the training ABL values, ignoring the CDI
+            tc.verifyEqual(sprintf('%.4f', out.model.autoReferenceRMSE), '0.0935');
+            tc.verifyTrue(any(contains(out.model.autoRankText, 'RMSE=0.0935  (ignores the CDI)')));
+            tc.verifyTrue(any(contains(out.model.autoRankText, 'No candidate beats the reference')));
         end
 
         function section2_tieBreakerEngages(tc)
             % The top two candidates fall inside the 1% RMSE band, so the
-            % limits-of-agreement tie-breaker decides. This is the dataset the
-            % article's "within 1% LOO-CV RMSE" observation belongs to.
+            % limits-of-agreement tie-breaker decides.
             app = tc.newAnalyzer();
             out = app.runWorkflow(tc.AblFile, tc.CdiFile2026027, '2026027', 'pH', ...
                 'TimeTolerance', 5, 'FitWindowAuto', true, ...
@@ -192,31 +196,37 @@ classdef WalkthroughTest < matlab.unittest.TestCase
                 'TimeTolerance', 5, 'CorrectionMethod', 'Auto (Best Model)');
 
             tc.verifyEqual(out.model.autoWinner, 'Hybrid (Time-Series + Deming)');
-            tc.verifyEqual(min(out.model.autoRMSE), 218.3203, 'AbsTol', 5e-4);
-            tc.verifyEqual(out.model.slope,     -7.1327,    'AbsTol', 5e-4);
-            tc.verifyEqual(out.model.intercept,  2191.1501, 'AbsTol', 5e-3);
-            tc.verifyEqual(out.model.lam,        0.10,      'AbsTol', 1e-9);
-            tc.verifyEqual(out.model.tau_rise,   8.0,       'AbsTol', 1e-9);
-            tc.verifyEqual(out.model.tau_fall,   8.0,       'AbsTol', 1e-9);
-            tc.verifyEqual(out.model.w1,         4,         'AbsTol', 1e-9);
+            tc.verifyEqual(min(out.model.autoRMSE), 205.9690, 'AbsTol', 5e-4);
+            tc.verifyEqual(out.model.slope,     -2.2513,   'AbsTol', 5e-4);
+            tc.verifyEqual(out.model.intercept,  698.8642, 'AbsTol', 5e-3);
+            tc.verifyEqual(out.model.lam,        0.50,     'AbsTol', 1e-9);
+            tc.verifyEqual(out.model.tau_rise,   8.0,      'AbsTol', 1e-9);
+            tc.verifyEqual(out.model.tau_fall,   8.0,      'AbsTol', 1e-9);
+            tc.verifyEqual(out.model.w1,         32,       'AbsTol', 1e-9);
 
-            tc.verifySubstring(out.formula, '(CDI_fast - 2191.1501) / -7.1327');
+            tc.verifySubstring(out.formula, '(CDI_fast - 698.8642) / -2.2513');
             tc.verifySubstring(out.formula, 'Fitted on 10/10 window pairs, 10 robust');
 
-            tc.verifyEqual(out.afterBiasText, 'After Correction: Bias=0.1180');
-            tc.verifyEqual(out.afterSDText,   'SD=161.6657 (on 10 kept pairs)');
-            tc.verifyEqual(out.model.r_new,   0.2005, 'AbsTol', 5e-4);
-            tc.verifySubstring(out.qualityText, 'SD ▼41.8%');
-            tc.verifySubstring(out.qualityText, 'BIAS + SD REDUCED');
+            tc.verifyEqual(out.afterBiasText, 'After Correction: Bias=-81.9161');
+            tc.verifyEqual(out.afterSDText,   'SD=180.2320 (on 10 kept pairs)');
+            tc.verifyEqual(out.model.r_new,   0.1573, 'AbsTol', 5e-4);
+            tc.verifySubstring(out.qualityText, 'SD ▼35.2%');
+            % the bias grows in magnitude, so the label is SD REDUCED only
+            tc.verifyTrue(startsWith(out.qualityText, 'SD REDUCED'));
 
             s = tc.keptPairStats(out);
             tc.verifyEqual(s.n, 10);
-            tc.verifyEqual(s.loaAfter, '[-316.747, 316.983]');
+            tc.verifyEqual(s.loaAfter, '[-435.171, 271.339]');
+
+            % Reference line: mean of the training ABL values, ignoring the CDI
+            tc.verifyEqual(sprintf('%.4f', out.model.autoReferenceRMSE), '173.8841');
+            tc.verifyTrue(any(contains(out.model.autoRankText, 'RMSE=173.8841  (ignores the CDI)')));
+            tc.verifyTrue(any(contains(out.model.autoRankText, 'No candidate beats the reference')));
         end
 
         function section3_noTieBreaker(tc)
-            % Unlike the pH dataset, the candidates here are widely separated,
-            % so the 1% tie-breaker must not engage.
+            % Unlike the pH dataset, the top two candidates are more than 1%
+            % apart, so the tie-breaker must not engage.
             app = tc.newAnalyzer();
             out = app.runWorkflow(tc.AblFile, tc.CdiFile2026007, '2026007', 'pO2', ...
                 'TimeTolerance', 5, 'CorrectionMethod', 'Auto (Best Model)');
@@ -225,8 +235,8 @@ classdef WalkthroughTest < matlab.unittest.TestCase
             gapPct = 100 * (sorted(2) - sorted(1)) / sorted(1);
             tc.verifyGreaterThan(gapPct, 1, ...
                 'Expected the top two candidates further than 1% apart for pO2/2026007');
-            tc.verifyEqual(sprintf('%.4f', sorted(2)), '292.9552');
-            tc.verifyEqual(sprintf('%.1f', gapPct),    '34.2');
+            tc.verifyEqual(sprintf('%.4f', sorted(2)), '213.2436');
+            tc.verifyEqual(sprintf('%.1f', gapPct),    '3.5');
         end
 
         function section3_allPatientsGivesSameResult(tc)

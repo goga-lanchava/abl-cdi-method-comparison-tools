@@ -4,10 +4,25 @@
 
 ### Update of 2026-09-26
 
-Changes to the v1.1.0 files since their first publication on 2026-09-19. None
-of them alters any statistic quoted in `WALKTHROUGH.md`.
+Changes to the v1.1.0 files since their first publication on 2026-09-19. The
+Weighted Deming fix changes the pO2 example (`WALKTHROUGH.md` §3); the pH
+example is unchanged.
 
 #### Fixed
+
+- Weighted (Linnet) Deming computes its weights correctly when the fitted
+  slope is negative. The estimate of each true value divided the CDI term by
+  the slope floored at 1e-5, so any negative slope was treated as 1e-5; it
+  now uses the fitted slope. Fits with a positive slope, including every fit
+  in the pH example, are unaffected. In the pO2 example Hybrid is still
+  selected, now with W1 = 32, λ = 0.50 and the deployed fit
+  `(CDI_fast - 698.8642) / -2.2513` (previously W1 = 4, λ = 0.10,
+  `(CDI_fast - 2191.1501) / -7.1327`). Its LOO-CV RMSE is 205.9690
+  (previously 218.3203), and the runner-up is Weighted Deming (213.2436).
+  After correction: bias -81.9161 (previously 0.1180), SD 180.2320
+  (previously 161.6657; reduction 35.2%, previously 41.8%), label
+  `SD REDUCED` (previously `BIAS + SD REDUCED`), r 0.1573 (previously
+  0.2005), 95% LoA [-435.171, 271.339].
 
 - The plotted and exported corrected series for an Auto-selected Hybrid model
   is computed with the same derivative-clip threshold as the deployed
@@ -24,6 +39,22 @@ of them alters any statistic quoted in `WALKTHROUGH.md`.
   LOO-CV RMSE are all unchanged. Only the drawn corrected trace of the pO2
   example shifts slightly between the paired samples (419 of 5,814 samples,
   by at most 8.4 mmHg and 0.45 mmHg on average).
+
+#### Changed
+
+- The Auto candidate "Deming Regression (fixed λ=1)" is fitted with plain
+  (unweighted) Deming, the same routine as the manual Deming method; it
+  previously used the Linnet-weighted routine at λ = 1. The selected model
+  is unchanged in both examples.
+
+#### Added
+
+- The Auto (Best Model) ranking ends with a reference line: the LOO-CV RMSE
+  of predicting each held-out ABL value by the mean of the training ABL
+  values, ignoring the CDI, followed by a note when no candidate beats it.
+  Model selection is unchanged. The value is stored on the correction model
+  as `autoReferenceRMSE`. In both examples no candidate beats the reference
+  (pH 0.0935, pO2 173.8841).
 
 #### Documentation
 
@@ -52,6 +83,8 @@ of them alters any statistic quoted in `WALKTHROUGH.md`.
   the LOO-CV RMSE values and LoA spans behind the tie-breaker, the values
   obtained without the fitting window, and PatLogGUI's column and row counts.
   The number of tests is unchanged (23).
+- `WalkthroughTest` checks the reference line in both examples and the pO2
+  values after the Weighted Deming fix.
 
 
 ### Changed - leave-one-out cross-validation is now fully fold-independent

@@ -70,8 +70,12 @@ tells you where each one comes from so both are independently checkable:
    triggers the limits-of-agreement tie-breaker: Weighted Deming scores
    RMSE 0.0953 against the Hybrid method's 0.0957 — a gap of 0.42% — so
    the narrower LoA span decides (0.3628 vs 0.3646), confirming Weighted
-   Deming as the winner. The Correction Report's formula text should
-   read:
+   Deming as the winner. Below the ranking, the Correction Report shows the
+   reference line `Reference: mean of training ABL  RMSE=0.0935  (ignores
+   the CDI)`, followed by `No candidate beats the reference`: predicting each
+   held-out ABL value by the mean of the other ABL values, without using the
+   CDI, gives a lower LOO-CV RMSE than every candidate. The Correction
+   Report's formula text should read:
    ```
    Model: Raw_CDI = 1.7395*ABL -5.3238  [Linnet Weighted Deming λ=0.10]
    Corrected = (Raw_CDI +5.3238) / 1.7395
@@ -102,21 +106,25 @@ Repeat step 3 with `examples/2026007_cdi.log` and Patient ID `2026007`,
 selecting **pO2** as the parameter, to reproduce the N=10 result discussed
 in Section 3 and the Conclusions of the article. Leave **Fit Window** unticked for this
 dataset: all 10 pairs are used, and no window selection is needed. Unlike
-the pH dataset in §2, the LOO-CV candidates here are widely separated —
-the Hybrid method wins outright with RMSE 218.3203 against 292.9552 for
-the runner-up (Bias Correction), a gap of 34.2% — so the 1% tie-breaker
-never engages. Before correction: Bias=48.460,
+the pH dataset in §2, the top two LOO-CV candidates are more than 1% apart —
+the Hybrid method wins with RMSE 205.9690 against 213.2436 for the
+runner-up (Weighted Deming), a gap of 3.5% — so the tie-breaker does not
+engage. The reference line reads `Reference: mean of training ABL
+RMSE=173.8841  (ignores the CDI)`, again followed by `No candidate beats the
+reference`. Before correction: Bias=48.460,
 SD=277.922, 95% LoA=[-496.267, 593.187], r=-0.1088. Auto (Best Model)
-selects **Hybrid (Time-Series + Deming)** (RMSE=218.3203), with winning
-parameters W1=4, τ_rise=τ_fall=8.0 min, Linnet λ=0.10, deployed as
-`CDI_corrected = (CDI_fast - 2191.1501) / -7.1327`. Corrected statistics:
-Bias=0.1180, SD=161.6657, and a correlation against the ABL draws that
-turns from r=-0.109 before correction to r=0.201 after it (the
-`Correlation Before` and `Correlation After` panels of the composite
-export), giving the software's own displayed "SD ▼41.8%,
-LoA ▼41.8%" reduction (reported as ~42% in the article, on unrounded
-values) and narrowing the 95% limits of agreement to [-316.747, 316.983]
-(legend of the exported "Bland-Altman After" panel). The Correction Report's formula text should confirm all
+selects **Hybrid (Time-Series + Deming)** (RMSE=205.9690), with winning
+parameters W1=32, τ_rise=τ_fall=8.0 min, Linnet λ=0.50, deployed as
+`CDI_corrected = (CDI_fast - 698.8642) / -2.2513`; the negative slope means
+the corrected series moves opposite to the CDI. Corrected statistics:
+`After Correction: Bias=-81.9161`, `SD=180.2320 (on 10 kept pairs)`, and a
+correlation against the ABL draws of r=-0.109 before correction and r=0.157
+after it (the `Correlation Before` and `Correlation After` panels of the
+composite export). The descriptive label reads `SD REDUCED | SD ▼35.2%
+LoA ▼35.2%`: the SD falls, but the bias grows in magnitude (48.460 to
+-81.9161), so the label is not `BIAS + SD REDUCED`. The 95% limits of
+agreement after correction are [-435.171, 271.339] (legend of the exported
+"Bland-Altman After" panel). The Correction Report's formula text should confirm all
 10 of 10 pairs are retained after MAD-based filtering (no exclusions) —
 so, unlike the pH example in §2, the before/after SD comparison for pO2
 uses the same N=10 pairs throughout without needing the retained-pairs

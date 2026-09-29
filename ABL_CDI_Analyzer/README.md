@@ -33,7 +33,9 @@ the continuous signal tracks the reference measurements more closely.
   hyperparameters of each fold tuned on that fold's training pairs only)
   model selection across all seven candidates, with the narrower Bland–Altman limits-of-agreement span
   used as a tie-breaker when the top two candidates' RMSE differ by less
-  than 1%
+  than 1%, and a reference line (the LOO-CV RMSE of predicting each held-out
+  ABL value by the mean of the training ABL values, ignoring the CDI) that
+  shows whether any candidate improves on it
 - Fitting-window controls with a stability score
 - Time trend, correlation, Bland–Altman, and before/after comparison
   visualizations

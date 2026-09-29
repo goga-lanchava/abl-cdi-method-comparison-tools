@@ -149,11 +149,11 @@ runtests('tests/WalkthroughTest.m', 'ProcedureName', 'section2_autoCorrection')
 |---|---|
 | `section2_beforeCorrection` | §2 pre-correction panel: 67/68 pairs, bias 0.047, SD 0.095, LoA, r; the fitting window Auto selects |
 | `section2_fitWindowIsRequired` | without the fitting window the §2 figures do **not** appear, and the values the walkthrough warns you would get instead (bias 0.049, the 1.8666/−6.2502 model, 62 robust pairs, SD ▼12.8%) do |
-| `section2_autoCorrection` | Weighted Deming wins; coefficients, λ, 61/67 retained pairs, after-correction bias, SD and r; on the 61 retained pairs, SD 0.0475 → 0.0426 (▼10.3%) and LoA [−0.020, 0.166] → [−0.084, 0.083] |
+| `section2_autoCorrection` | Weighted Deming wins; coefficients, λ, 61/67 retained pairs, after-correction bias, SD and r; on the 61 retained pairs, SD 0.0475 → 0.0426 (▼10.3%) and LoA [−0.020, 0.166] → [−0.084, 0.083]; the reference line (0.0935) and its note that no candidate beats it |
 | `section2_tieBreakerEngages` | the top two candidates fall inside the 1% RMSE band: RMSE 0.0953 vs 0.0957 (0.42%), LoA spans 0.3628 vs 0.3646 |
 | `section3_beforeCorrection` | §3 pre-correction panel for pO2 |
-| `section3_autoCorrection` | Hybrid wins; RMSE, W1, τ, λ, deployed fit, after-correction bias, SD, r, SD ▼41.8% and LoA [−316.747, 316.983] |
-| `section3_noTieBreaker` | the candidates are well separated (runner-up RMSE 292.9552, 34.2% behind), so the tie-breaker does not engage |
+| `section3_autoCorrection` | Hybrid wins; RMSE, W1, τ, λ, deployed fit, after-correction bias, SD, r, the label `SD REDUCED` with SD ▼35.2%, LoA [−435.171, 271.339], and the reference line (173.8841) with its note |
+| `section3_noTieBreaker` | the top two candidates are more than 1% apart (runner-up RMSE 213.2436, 3.5% behind), so the tie-breaker does not engage |
 | `section3_allPatientsGivesSameResult` | the walkthrough's note that "All Patients" gives identical statistics |
 | `looCvTuningIsFoldIndependent` | the LOO-CV result is reproducible and no candidate scores `NaN` |
 | `exportResultsWritesFiles` | Export Results writes both the `.xlsx` and the two `.csv` files |

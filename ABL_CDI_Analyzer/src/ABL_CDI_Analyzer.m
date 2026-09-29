@@ -120,6 +120,27 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
             end
         end
 
+        % --- DEMING REGRESSION ---
+        % Unweighted Deming fit y = intercept + slope*x. lambda is the error-variance
+        % ratio sigma^2(y)/sigma^2(x); callers pass x = ABL and y = CDI.
+        function [slope, intercept] = fitDeming(~, x, y, lambda)
+            n = numel(x);
+            xm = mean(x, 'omitnan'); ym = mean(y, 'omitnan');
+            sxx = sum((x - xm).^2, 'omitnan') / max(n - 1, 1);
+            syy = sum((y - ym).^2, 'omitnan') / max(n - 1, 1);
+            sxy = sum((x - xm) .* (y - ym), 'omitnan') / max(n - 1, 1);
+            if n < 2 || abs(2 * sxy) < 1e-10
+                slope = 1;
+            else
+                slope = (syy - lambda * sxx + sqrt((syy - lambda * sxx)^2 + 4 * lambda * sxy^2)) / (2 * sxy);
+            end
+            if isnan(slope) || isinf(slope) || abs(slope) < 1e-4
+                slope = 1; intercept = ym - xm;
+            else
+                intercept = ym - slope * xm;
+            end
+        end
+
         % --- WEIGHTED DEMING REGRESSION (LINNET ALGORITHM) ---
         % Iteratively computes weighted Deming regression where weight w_i = 1 / u_hat_i^2.
         % lambda is the error-variance ratio sigma^2(y)/sigma^2(x). Callers pass
@@ -149,7 +170,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                 prev_slope = slope;
                 prev_intercept = intercept;
 
-                u_hat = 0.5 * (x + (y - intercept) / max(slope, 1e-5));
+                u_hat = 0.5 * (x + (y - intercept) / slope);
                 u_hat(abs(u_hat) < 1e-4) = 1e-4;
                 w = 1 ./ (u_hat.^2);
                 w = w / sum(w); 
@@ -1968,19 +1989,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                     cleanMask = robustCleanMask(app, xABL_fit, yCDI_fit);
                     xC = xABL_fit(cleanMask); yC = yCDI_fit(cleanMask);
                     lam = app.DemingLambdaEditField.Value;
-                    n2 = numel(xC);
-                    xm = mean(xC,'omitnan'); ym = mean(yC,'omitnan');
-                    sxx = sum((xC-xm).^2,'omitnan')/(n2-1);
-                    syy = sum((yC-ym).^2,'omitnan')/(n2-1);
-                    sxy = sum((xC-xm).*(yC-ym),'omitnan')/(n2-1);
-                    denom = 2*sxy;
-                    if abs(denom)<1e-10, slope=1;
-                    else, slope=(syy-lam*sxx+sqrt((syy-lam*sxx)^2+4*lam*sxy^2))/denom;
-                    end
-                    if isnan(slope)||isinf(slope)||abs(slope)<1e-4
-                        slope=1; intercept=ym-xm;
-                    else, intercept=ym-slope*xm;
-                    end
+                    [slope, intercept] = fitDeming(app, xC, yC, lam);
                     yCorrected = (yCDI_fit - intercept) / slope;
                     yCorrected(~cleanMask) = NaN;
                     app.CorrectionModel.type = 'deming';
@@ -2155,7 +2164,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                                         end
 
                                     case 4 % Standard Deming (Fixed lambda = 1.0)
-                                        [sl_d, ic_d] = fitWeightedDeming(app, xTrC, yTrC, 1.0);
+                                        [sl_d, ic_d] = fitDeming(app, xTrC, yTrC, 1.0);
                                         pred = (yTe - ic_d) / sl_d;
 
                                     case 5 % Linnet Weighted Deming (lambda tuned on the training pairs)
@@ -2264,6 +2273,15 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                         end
                     end
 
+                    % Reference for the ranking: predict each held-out ABL value by the
+                    % mean of the training ABL values, ignoring the CDI. A candidate
+                    % that does not beat it adds no predictive information from the CDI.
+                    refErrors = nan(n, 1);
+                    for i = 1:n
+                        refErrors(i) = mean(xABL_fit([1:i-1, i+1:n]), 'omitnan') - xABL_fit(i);
+                    end
+                    referenceRMSE = sqrt(mean(refErrors.^2, 'omitnan'));
+
                     % Model Selection: Best LOO-CV RMSE with <1% LoA Span Tiebreaker
                     if n < 7
                         bestIdx = 1; 
@@ -2323,7 +2341,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                                 ratio, ratio, numel(xABL_fit), numel(xABL), sum(cMaskFull));
 
                         case 4 % Deming (lambda=1.0)
-                            [slope, intercept] = fitWeightedDeming(app, xCleanFull, yCleanFull, 1.0);
+                            [slope, intercept] = fitDeming(app, xCleanFull, yCleanFull, 1.0);
                             yCorrected = (yCDI_fit - intercept) / slope;
                             yCorrected(~cMaskFull) = NaN;
                             app.CorrectionModel.type = 'deming'; 
@@ -2455,6 +2473,11 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                             ri, candidateNames{rankOrder(ri)}, sortedRMSE(ri), ...
                             candidateLoASpan(rankOrder(ri)), marker);
                     end
+                    rankText{end+1} = sprintf('  --  %-35s  RMSE=%.4f  (ignores the CDI)', ...
+                        'Reference: mean of training ABL', referenceRMSE);
+                    if min(candidateRMSE) >= referenceRMSE
+                        rankText{end+1} = '      No candidate beats the reference: the CDI does not improve prediction of ABL here.';
+                    end
 
                     app.CorrectionModel.autoSelected  = true;
                     app.CorrectionModel.autoWinner    = bestName;
@@ -2463,6 +2486,7 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                     app.CorrectionModel.autoRMSE      = candidateRMSE;
                     app.CorrectionModel.autoLoASpan   = candidateLoASpan;
                     app.CorrectionModel.autoCandidates= candidateNames;
+                    app.CorrectionModel.autoReferenceRMSE = referenceRMSE;
 
                 otherwise
                     uialert(app.UIFigure, ['Unknown correction method selected: ', method], 'Method Error');
