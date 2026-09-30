@@ -1,6 +1,6 @@
 # Running the tests
 
-The repository ships 23 automated tests. They check that the software still
+The repository ships 25 automated tests. They check that the software still
 produces every value [WALKTHROUGH.md](WALKTHROUGH.md) says it reports, which
 includes every result the accompanying article quotes for the two example
 recordings, and that the file parsers, temporal pairing, MAD filtering and
@@ -75,11 +75,11 @@ The run ends with:
 
 ```
 Totals:
-   23 Passed, 0 Failed, 0 Incomplete.
+   25 Passed, 0 Failed, 0 Incomplete.
    206.03 seconds testing time.
 ```
 
-`23 Passed, 0 Failed` means every figure quoted in `WALKTHROUGH.md` was
+`25 Passed, 0 Failed` means every figure quoted in `WALKTHROUGH.md` was
 reproduced, along with all the parsing, pairing, filtering and correction
 checks.
 
@@ -143,7 +143,7 @@ runtests('tests/WalkthroughTest.m', 'ProcedureName', 'section2_autoCorrection')
 | `madFilterKeepsEverythingWhenMadIsZero` | identical differences give MAD = 0, and no pair is rejected |
 | `biasCorrectionMatchesHandComputedOffset` | the fitted offset, the corrected series, the `NaN`-ing of excluded pairs and the zero residual bias all match a value the test recomputes independently |
 
-### `tests/WalkthroughTest.m` — 13 reproduction and regression tests
+### `tests/WalkthroughTest.m` — 15 reproduction and regression tests
 
 | Test | Checks |
 |---|---|
@@ -155,6 +155,8 @@ runtests('tests/WalkthroughTest.m', 'ProcedureName', 'section2_autoCorrection')
 | `section3_autoCorrection` | Hybrid wins; RMSE, W1, τ, λ, deployed fit, after-correction bias, SD, r, the label `SD REDUCED` with SD ▼35.2%, LoA [−435.171, 271.339], and the reference line (173.8841) with its note |
 | `section3_noTieBreaker` | the top two candidates are more than 1% apart (runner-up RMSE 213.2436, 3.5% behind), so the tie-breaker does not engage |
 | `section3_allPatientsGivesSameResult` | the walkthrough's note that "All Patients" gives identical statistics |
+| `section4_batchReproducesExamples` | `runBatch` on `examples/batch_example.csv` gives both examples' §2 and §3 results in one summary table and writes it to disk |
+| `section4_batchContinuesAfterFailure` | a recording that cannot be read is reported in `Status`, and the batch continues |
 | `looCvTuningIsFoldIndependent` | the LOO-CV result is reproducible and no candidate scores `NaN` |
 | `exportResultsWritesFiles` | Export Results writes both the `.xlsx` and the two `.csv` files |
 | `patLogKeepsEighteenEssentialColumns` | cleaning keeps exactly 18 essential columns, removes 218, and leaves all 1907 rows on display |

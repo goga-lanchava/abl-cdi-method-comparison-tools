@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Batch analysis: `ABL_CDI_Analyzer.runBatch(recordings, outFile)` runs the
+  full workflow for every row of a recordings table (`.csv`/`.xlsx` or a
+  MATLAB table) and returns one summary row per recording, optionally written
+  to `.xlsx` or `.csv`. The summary gives pair counts, agreement before and
+  after correction, the selected model and its coefficients, the LOO-CV RMSE of
+  the winner, the runner-up and the reference, and the descriptive label. A
+  recording that cannot be analysed is reported in the `Status` column and the
+  batch continues. Each recording runs in its own hidden instance, so no state
+  carries over between rows. No change to the interface or to any result.
+- `examples/batch_example.csv` (the two example recordings) and
+  `WALKTHROUGH.md` §4.
+- `WalkthroughTest`: two batch tests (25 tests in total).
+
 ## v1.1.0 — 2026-09-19, updated 2026-09-26
 
 ### Update of 2026-09-26

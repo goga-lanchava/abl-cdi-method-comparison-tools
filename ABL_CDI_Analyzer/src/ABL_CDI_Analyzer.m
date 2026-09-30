@@ -3783,6 +3783,57 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
     end
 
     methods (Static)
+        function summary = runBatch(recordings, outFile)
+            % Batch analysis: runs the full workflow for every row of RECORDINGS
+            % and returns one summary row per recording.
+            %
+            % RECORDINGS is a table, or the path of a .csv/.xlsx file, with the
+            % columns ABLFile, CDIFile, PatientID and Parameter, and optionally
+            % FitWindowAuto (default false), TimeTolerance (default 5 min) and
+            % CorrectionMethod (default 'Auto (Best Model)'). Relative file paths
+            % are resolved against the folder of the recordings file. If OUTFILE
+            % is given, the summary is also written there (.xlsx or .csv). A
+            % recording that cannot be analysed is reported in the Status column
+            % and the batch continues.
+            %
+            %   summary = ABL_CDI_Analyzer.runBatch('examples/batch_example.csv', 'summary.xlsx');
+            arguments
+                recordings
+                outFile {mustBeTextScalar} = ''
+            end
+            baseDir = pwd;
+            if ~istable(recordings)
+                listFile = char(recordings);
+                baseDir = fileparts(listFile);
+                if isempty(baseDir), baseDir = pwd; end
+                opts = detectImportOptions(listFile, 'TextType', 'string');
+                textCols = intersect(opts.VariableNames, ...
+                    {'ABLFile', 'CDIFile', 'PatientID', 'Parameter', 'CorrectionMethod'});
+                opts = setvartype(opts, textCols, 'string');
+                recordings = readtable(listFile, opts);
+            end
+            required = {'ABLFile', 'CDIFile', 'PatientID', 'Parameter'};
+            missing = setdiff(required, recordings.Properties.VariableNames);
+            if ~isempty(missing)
+                error('ABL_CDI_Analyzer:runBatch', 'Recordings table is missing column(s): %s', ...
+                    strjoin(missing, ', '));
+            end
+
+            n = height(recordings);
+            rows = cell(n, 1);
+            for k = 1:n
+                fprintf('Recording %d of %d: %s / %s ... ', k, n, ...
+                    string(recordings.PatientID(k)), string(recordings.Parameter(k)));
+                rows{k} = ABL_CDI_Analyzer.batchRow(recordings(k, :), baseDir);
+                fprintf('%s\n', rows{k}.Status);
+            end
+            summary = struct2table(vertcat(rows{:}), 'AsArray', true);
+
+            if strlength(string(outFile)) > 0
+                writetable(summary, char(outFile));
+            end
+        end
+
         function exportStatsAsSVG(statsLines, param, methodName)
             [file, path] = uiputfile({'*.svg','SVG vector (*.svg)'}, ...
                 'Save Statistics As', sprintf('%s_%s_statistics.svg', param, strrep(methodName,' ','_')));
@@ -3885,6 +3936,105 @@ classdef ABL_CDI_Analyzer < matlab.apps.AppBase
                 print(fig, '-dprinter');
             catch ME
                 uialert(fig, ['Print failed: ' ME.message], 'Print Error');
+            end
+        end
+    end
+
+    methods (Static, Access = private)
+        function r = batchRow(rec, baseDir)
+            % One summary row of runBatch.
+            r = struct('ABLFile', "", 'CDIFile', "", 'PatientID', "", 'Parameter', "", ...
+                'FitWindowAuto', false, 'TimeTolerance', 5, 'CorrectionMethod', "Auto (Best Model)", ...
+                'Status', "", 'NPairs', NaN, 'NTotal', NaN, ...
+                'BiasBefore', NaN, 'SDBefore', NaN, 'LoALowBefore', NaN, 'LoAHighBefore', NaN, 'rBefore', NaN, ...
+                'Model', "", 'Slope', NaN, 'Intercept', NaN, 'Lambda', NaN, ...
+                'LOOCV_RMSE', NaN, 'RunnerUp', "", 'RunnerUp_RMSE', NaN, ...
+                'Reference_RMSE', NaN, 'BeatsReference', "", ...
+                'NKept', NaN, 'SDBeforeKept', NaN, 'BiasAfter', NaN, 'SDAfter', NaN, ...
+                'LoALowAfter', NaN, 'LoAHighAfter', NaN, 'rAfter', NaN, ...
+                'SDReductionPct', NaN, 'Label', "");
+            r.ABLFile   = string(rec.ABLFile);
+            r.CDIFile   = string(rec.CDIFile);
+            r.PatientID = string(rec.PatientID);
+            r.Parameter = string(rec.Parameter);
+            vars = rec.Properties.VariableNames;
+            if ismember('FitWindowAuto', vars)
+                r.FitWindowAuto = ABL_CDI_Analyzer.toFlag(rec.FitWindowAuto);
+            end
+            if ismember('TimeTolerance', vars) && ~isnan(double(rec.TimeTolerance))
+                r.TimeTolerance = double(rec.TimeTolerance);
+            end
+            if ismember('CorrectionMethod', vars) && strlength(string(rec.CorrectionMethod)) > 0 ...
+                    && ~ismissing(string(rec.CorrectionMethod))
+                r.CorrectionMethod = string(rec.CorrectionMethod);
+            end
+
+            app = [];
+            try
+                app = ABL_CDI_Analyzer;
+                app.UIFigure.Visible = 'off';
+                o = app.runWorkflow(ABL_CDI_Analyzer.resolvePath(r.ABLFile, baseDir), ...
+                    ABL_CDI_Analyzer.resolvePath(r.CDIFile, baseDir), r.PatientID, r.Parameter, ...
+                    'TimeTolerance', r.TimeTolerance, 'FitWindowAuto', r.FitWindowAuto, ...
+                    'CorrectionMethod', r.CorrectionMethod);
+                s = o.stats;
+                r.NPairs = s.N; r.NTotal = s.Ntotal;
+                r.BiasBefore = s.bias; r.SDBefore = s.sd;
+                r.LoALowBefore = s.loa_lo; r.LoAHighBefore = s.loa_up; r.rBefore = s.r;
+
+                m = o.model;
+                if isfield(m, 'autoSelected') && m.autoSelected
+                    names = string(m.autoCandidates);
+                    w = find(names == string(m.autoWinner), 1);
+                    r.Model = names(w);
+                    r.LOOCV_RMSE = m.autoRMSE(w);
+                    [~, order] = sort(m.autoRMSE);
+                    order = order(order ~= w);
+                    r.RunnerUp = names(order(1));
+                    r.RunnerUp_RMSE = m.autoRMSE(order(1));
+                    r.Reference_RMSE = m.autoReferenceRMSE;
+                    if r.LOOCV_RMSE < r.Reference_RMSE, r.BeatsReference = "yes"; else, r.BeatsReference = "no"; end
+                else
+                    r.Model = r.CorrectionMethod;
+                end
+                if isfield(m, 'slope'), r.Slope = m.slope; end
+                if isfield(m, 'intercept'), r.Intercept = m.intercept; end
+                if isfield(m, 'lam'), r.Lambda = m.lam; end
+
+                % Before/after on the same MAD-retained pairs, as in the Correction Report
+                x = s.xABL(:); y = s.yCDI(:); yc = m.yCorrected(:);
+                if numel(yc) == numel(x)
+                    keep = ~isnan(yc) & ~isnan(x);
+                    dB = y(keep) - x(keep); dA = yc(keep) - x(keep);
+                    r.NKept = nnz(keep);
+                    r.SDBeforeKept = std(dB);
+                    r.BiasAfter = mean(dA); r.SDAfter = std(dA);
+                    r.LoALowAfter = r.BiasAfter - 1.96 * r.SDAfter;
+                    r.LoAHighAfter = r.BiasAfter + 1.96 * r.SDAfter;
+                    r.SDReductionPct = 100 * (1 - r.SDAfter / r.SDBeforeKept);
+                end
+                if isfield(m, 'r_new'), r.rAfter = m.r_new; end
+                r.Label = strtrim(extractBefore(string(o.qualityText) + "  |", "  |"));
+                r.Status = "ok";
+            catch err
+                r.Status = "error: " + string(err.message);
+            end
+            if ~isempty(app) && isvalid(app), delete(app); end
+        end
+
+        function p = resolvePath(p, baseDir)
+            p = char(p);
+            if ~java.io.File(p).isAbsolute()
+                p = fullfile(baseDir, p);
+            end
+        end
+
+        function tf = toFlag(v)
+            if iscell(v), v = v{1}; end
+            if islogical(v) || isnumeric(v)
+                tf = ~isempty(v) && ~isnan(double(v(1))) && logical(v(1));
+            else
+                tf = any(lower(strtrim(string(v))) == ["true", "1", "yes", "y"]);
             end
         end
     end

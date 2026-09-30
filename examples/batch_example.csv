@@ -1,0 +1,3 @@
+ABLFile,CDIFile,PatientID,Parameter,FitWindowAuto
+PatLog_export.csv,2026027_cdi.log,2026027,pH,true
+PatLog_export.csv,2026007_cdi.log,2026007,pO2,false

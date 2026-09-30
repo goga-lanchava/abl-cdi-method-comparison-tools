@@ -139,6 +139,37 @@ figure shown in article Fig. 5.
 > draws from another patient are being pulled into the window; explicitly
 > select `2026007` in that case.
 
+## 4. Batch analysis (optional)
+
+To analyse many recordings in one run, list them in a table with the columns
+`ABLFile`, `CDIFile`, `PatientID` and `Parameter` (optionally `FitWindowAuto`,
+`TimeTolerance` and `CorrectionMethod`), one row per recording.
+`examples/batch_example.csv` lists the two recordings above. From the
+repository root, with `ABL_CDI_Analyzer/src` on the MATLAB path, run:
+
+```matlab
+summary = ABL_CDI_Analyzer.runBatch('examples/batch_example.csv', 'summary.xlsx');
+```
+
+Each recording is analysed as in §2 and §3 (Auto (Best Model) unless the table
+says otherwise), and `summary` gets one row per recording; it is also written
+to `summary.xlsx` (or a `.csv` file). For the two example recordings, both rows
+have `Status` `ok`, and they reproduce the values above:
+
+- pH / 2026027: `NPairs` 67, `NTotal` 68, `NKept` 61, `Model` Weighted Deming
+  (Linnet, tuned λ), `LOOCV_RMSE` 0.0953, `RunnerUp_RMSE` 0.0957,
+  `Reference_RMSE` 0.0935, `BeatsReference` no, `BiasAfter` -0.0002,
+  `SDAfter` 0.0426, LoA after [-0.084, 0.083], `SDReductionPct` 10.3,
+  `Label` BIAS + SD REDUCED.
+- pO2 / 2026007: `NPairs`, `NTotal` and `NKept` 10, `Model` Hybrid (Time-Series
+  + Deming), `LOOCV_RMSE` 205.9690, `RunnerUp_RMSE` 213.2436,
+  `Reference_RMSE` 173.8841, `BeatsReference` no, `BiasAfter` -81.9161,
+  `SDAfter` 180.2320, LoA after [-435.171, 271.339], `SDReductionPct` 35.2,
+  `Label` SD REDUCED.
+
+A recording that cannot be analysed (for example, a missing file) gets an
+`error: …` message in its `Status` column, and the batch continues.
+
 ## Notes
 
 - **Tolerance.** All values above are given to the decimals the software

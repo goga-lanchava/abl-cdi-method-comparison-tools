@@ -46,7 +46,7 @@ runtests('tests')
 ```
 
 That is the whole setup — the tests put the source folders on the path
-themselves. Expect 23 passing tests in roughly three to four minutes.
+themselves. Expect 25 passing tests in roughly four to five minutes.
 
 **[TESTING.md](TESTING.md) gives a step-by-step guide**, including what the
 output looks like, how to read a failure, and a table of what each test

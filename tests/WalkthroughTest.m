@@ -278,6 +278,53 @@ classdef WalkthroughTest < matlab.unittest.TestCase
             end
         end
 
+        % ---------- WALKTHROUGH.md section 4: batch analysis ----------
+
+        function section4_batchReproducesExamples(tc)
+            % runBatch on examples/batch_example.csv gives the section 2 and 3
+            % results in one summary table, and writes it to disk.
+            outDir = tempname;
+            mkdir(outDir);
+            tc.addTeardown(@() rmdir(outDir, 's'));
+            outFile = fullfile(outDir, 'summary.csv');
+            evalc('S = ABL_CDI_Analyzer.runBatch(fullfile(tc.Examples, ''batch_example.csv''), outFile);');
+
+            tc.verifyEqual(height(S), 2);
+            tc.verifyTrue(all(S.Status == "ok"));
+            tc.verifyEqual(height(readtable(outFile)), 2);
+
+            pH = S(S.Parameter == "pH", :);
+            tc.verifyEqual([pH.NPairs pH.NTotal pH.NKept], [67 68 61]);
+            tc.verifyEqual(pH.Model, "Weighted Deming (Linnet, tuned λ)");
+            tc.verifyEqual(sprintf('%.4f %.4f %.4f', pH.LOOCV_RMSE, pH.RunnerUp_RMSE, pH.Reference_RMSE), ...
+                '0.0953 0.0957 0.0935');
+            tc.verifyEqual(pH.BeatsReference, "no");
+            tc.verifyEqual(sprintf('%.4f %.4f', pH.BiasAfter, pH.SDAfter), '-0.0002 0.0426');
+            tc.verifyEqual(sprintf('[%.3f, %.3f]', pH.LoALowAfter, pH.LoAHighAfter), '[-0.084, 0.083]');
+            tc.verifyEqual(sprintf('%.1f', pH.SDReductionPct), '10.3');
+            tc.verifyEqual(pH.Label, "BIAS + SD REDUCED");
+
+            pO2 = S(S.Parameter == "pO2", :);
+            tc.verifyEqual([pO2.NPairs pO2.NTotal pO2.NKept], [10 10 10]);
+            tc.verifyEqual(pO2.Model, "Hybrid (Time-Series + Deming)");
+            tc.verifyEqual(sprintf('%.4f %.4f %.4f', pO2.LOOCV_RMSE, pO2.RunnerUp_RMSE, pO2.Reference_RMSE), ...
+                '205.9690 213.2436 173.8841');
+            tc.verifyEqual(pO2.BeatsReference, "no");
+            tc.verifyEqual(sprintf('%.4f %.4f', pO2.BiasAfter, pO2.SDAfter), '-81.9161 180.2320');
+            tc.verifyEqual(sprintf('[%.3f, %.3f]', pO2.LoALowAfter, pO2.LoAHighAfter), '[-435.171, 271.339]');
+            tc.verifyEqual(sprintf('%.1f', pO2.SDReductionPct), '35.2');
+            tc.verifyEqual(pO2.Label, "SD REDUCED");
+        end
+
+        function section4_batchContinuesAfterFailure(tc)
+            % A recording that cannot be read is reported, not fatal.
+            bad = table("missing.csv", "2026007_cdi.log", "2026007", "pO2", ...
+                'VariableNames', {'ABLFile', 'CDIFile', 'PatientID', 'Parameter'});
+            evalc('S = ABL_CDI_Analyzer.runBatch(bad);');
+            tc.verifyEqual(height(S), 1);
+            tc.verifyTrue(startsWith(S.Status, "error:"));
+        end
+
         % ---------- feature regressions ----------
 
         function exportResultsWritesFiles(tc)

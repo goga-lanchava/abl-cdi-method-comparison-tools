@@ -68,6 +68,24 @@ moved into core MATLAB only in recent releases.
    restrict to a **fitting window**, and click **Apply Correction**.
 5. **Export** the corrected trend, figures, or formula.
 
+### Batch analysis
+
+To analyse many recordings in one run, list them in a table (`.csv` or
+`.xlsx`) with the columns `ABLFile`, `CDIFile`, `PatientID` and `Parameter`,
+and optionally `FitWindowAuto`, `TimeTolerance` and `CorrectionMethod`:
+
+```matlab
+summary = ABL_CDI_Analyzer.runBatch('recordings.csv', 'summary.xlsx');
+```
+
+Each row is analysed with the same workflow as the interface (Auto (Best
+Model) by default). The summary has one row per recording: pair counts,
+agreement before and after correction (bias, SD, limits of agreement, r), the
+selected model and its coefficients, the LOO-CV RMSE of the winner, the
+runner-up and the reference, and the descriptive label. A recording that
+cannot be analysed is reported in the `Status` column and the batch continues.
+See `examples/batch_example.csv` and WALKTHROUGH.md §4.
+
 See [docs/DATA_FORMATS.md](docs/DATA_FORMATS.md) for input file format
 details and [../CODE_METADATA.md](../CODE_METADATA.md) for the SoftwareX
 submission metadata table.
